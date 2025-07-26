@@ -1,4 +1,4 @@
-import { PitchDetector, type PitchResult, FFT_SIZE } from "../pitch-detector.js";
+import { FFT_SIZE, PitchDetector, type PitchResult } from "../pitch-detector.js";
 
 // Live reload for development
 if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
@@ -20,11 +20,10 @@ class GuitarTuner {
    private needle = document.getElementById("needle") as unknown as SVGLineElement;
    private startBtn = document.getElementById("start-btn") as HTMLButtonElement;
    private debugBtn = document.getElementById("debug-btn") as HTMLButtonElement;
-   private status = document.getElementById("status") as HTMLDivElement;
    private debugSection = document.getElementById("debug-section") as HTMLDivElement;
    private spectrumCanvas = document.getElementById("spectrum-canvas") as HTMLCanvasElement;
    private spectrumCtx = this.spectrumCanvas.getContext("2d") as CanvasRenderingContext2D;
-   
+
    private debugVisible = false;
 
    constructor() {
@@ -37,12 +36,36 @@ class GuitarTuner {
       this.debugVisible = !this.debugVisible;
       if (this.debugVisible) {
          this.debugSection.classList.remove("hidden");
-         this.debugBtn.classList.remove("bg-gray-800", "bg-opacity-30", "hover:bg-opacity-50", "text-gray-600", "hover:text-gray-400");
-         this.debugBtn.classList.add("bg-yellow-600", "bg-opacity-80", "hover:bg-opacity-100", "text-yellow-100", "hover:text-white");
+         this.debugBtn.classList.remove(
+            "bg-gray-800",
+            "bg-opacity-30",
+            "hover:bg-opacity-50",
+            "text-gray-600",
+            "hover:text-gray-400",
+         );
+         this.debugBtn.classList.add(
+            "bg-yellow-600",
+            "bg-opacity-80",
+            "hover:bg-opacity-100",
+            "text-yellow-100",
+            "hover:text-white",
+         );
       } else {
          this.debugSection.classList.add("hidden");
-         this.debugBtn.classList.remove("bg-yellow-600", "bg-opacity-80", "hover:bg-opacity-100", "text-yellow-100", "hover:text-white");
-         this.debugBtn.classList.add("bg-gray-800", "bg-opacity-30", "hover:bg-opacity-50", "text-gray-600", "hover:text-gray-400");
+         this.debugBtn.classList.remove(
+            "bg-yellow-600",
+            "bg-opacity-80",
+            "hover:bg-opacity-100",
+            "text-yellow-100",
+            "hover:text-white",
+         );
+         this.debugBtn.classList.add(
+            "bg-gray-800",
+            "bg-opacity-30",
+            "hover:bg-opacity-50",
+            "text-gray-600",
+            "hover:text-gray-400",
+         );
       }
    }
 
@@ -56,8 +79,6 @@ class GuitarTuner {
 
    async start() {
       try {
-         this.status.textContent = "Requesting microphone access...";
-
          const stream = await navigator.mediaDevices.getUserMedia({
             audio: {
                echoCancellation: false,
@@ -82,11 +103,9 @@ class GuitarTuner {
          this.startBtn.textContent = "STOP";
          this.startBtn.classList.remove("bg-green-600", "hover:bg-green-700");
          this.startBtn.classList.add("bg-red-600", "hover:bg-red-700");
-         this.status.textContent = "Listening...";
 
          this.analyze();
       } catch (error) {
-         this.status.textContent = "Microphone access denied";
          console.error("Error accessing microphone:", error);
       }
    }
@@ -103,7 +122,6 @@ class GuitarTuner {
       this.startBtn.textContent = "START";
       this.startBtn.classList.remove("bg-red-600", "hover:bg-red-700");
       this.startBtn.classList.add("bg-green-600", "hover:bg-green-700");
-      this.status.textContent = "Click START to begin tuning";
       this.noteDisplay.textContent = "A";
       this.frequencyDisplay.textContent = "440.00 Hz";
       this.needle.setAttribute("transform", "rotate(0, 100, 100)");
