@@ -1,4 +1,4 @@
-import { FFT_SIZE, PitchDetector, type PitchResult } from "../pitch-detector.js";
+import { CHUNK_SIZE, PitchDetector, type PitchResult, SAMPLING_RATE } from "../pitch-detector.js";
 
 // Live reload for development
 if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
@@ -8,9 +8,8 @@ if (window.location.hostname === "localhost" || window.location.hostname === "12
 
 class GuitarTuner {
    private audioContext: AudioContext | null = null;
-   private analyzer: AnalyserNode | null = null;
+   private processor: ScriptProcessorNode | null = null;
    private microphone: MediaStreamAudioSourceNode | null = null;
-   private frequencyData: Uint8Array | null = null;
    private isActive = false;
 
    private pitchDetector: PitchDetector;
@@ -79,32 +78,57 @@ class GuitarTuner {
 
    async start() {
       try {
+         // Request exact sample rate to match reference implementation
          const stream = await navigator.mediaDevices.getUserMedia({
             audio: {
                echoCancellation: false,
                noiseSuppression: false,
                autoGainControl: false,
+               sampleRate: SAMPLING_RATE, // Request 48kHz
             },
          });
 
-         this.audioContext = new AudioContext();
-         this.analyzer = this.audioContext.createAnalyser();
-         this.analyzer.fftSize = FFT_SIZE;
-         this.analyzer.smoothingTimeConstant = 0.1;
+         // Create AudioContext with exact sample rate
+         this.audioContext = new AudioContext({ sampleRate: SAMPLING_RATE });
 
-         this.pitchDetector = new PitchDetector(this.audioContext.sampleRate);
+         console.log(`AudioContext sample rate: ${this.audioContext.sampleRate}Hz`);
+
+         // Use ScriptProcessorNode for exact 1024-sample chunks
+         this.processor = this.audioContext.createScriptProcessor(CHUNK_SIZE, 1, 1);
+
+         this.processor.onaudioprocess = (event: AudioProcessingEvent) => {
+            if (!this.isActive) return;
+
+            const inputBuffer = event.inputBuffer;
+            const inputData = inputBuffer.getChannelData(0); // Mono channel
+
+            // Convert to Float32Array and process exactly like reference
+            const audioChunk = new Float32Array(inputData);
+
+            try {
+               const result = this.pitchDetector.processAudioChunk(audioChunk);
+
+               if (result) {
+                  this.updateDisplay(result.note, result.frequency, result.cents);
+                  if (this.debugVisible) {
+                     this.drawSpectrum(result);
+                  }
+               }
+            } catch (error) {
+               console.error("Error processing audio chunk:", error);
+            }
+         };
 
          this.microphone = this.audioContext.createMediaStreamSource(stream);
-         this.microphone.connect(this.analyzer);
-
-         this.frequencyData = new Uint8Array(this.analyzer.frequencyBinCount);
+         if (this.processor) {
+            this.microphone.connect(this.processor);
+         }
+         this.processor?.connect(this.audioContext.destination); // Prevent garbage collection
 
          this.isActive = true;
          this.startBtn.textContent = "STOP";
          this.startBtn.classList.remove("bg-green-600", "hover:bg-green-700");
          this.startBtn.classList.add("bg-red-600", "hover:bg-red-700");
-
-         this.analyze();
       } catch (error) {
          console.error("Error accessing microphone:", error);
       }
@@ -112,12 +136,18 @@ class GuitarTuner {
 
    stop() {
       this.isActive = false;
+      if (this.processor) {
+         this.processor.disconnect();
+         this.processor = null;
+      }
+      if (this.microphone) {
+         this.microphone.disconnect();
+         this.microphone = null;
+      }
       if (this.audioContext) {
          this.audioContext.close();
          this.audioContext = null;
       }
-      this.analyzer = null;
-      this.microphone = null;
 
       this.startBtn.textContent = "START";
       this.startBtn.classList.remove("bg-red-600", "hover:bg-red-700");
@@ -127,37 +157,20 @@ class GuitarTuner {
       this.needle.setAttribute("transform", "rotate(0, 100, 100)");
    }
 
-   analyze() {
-      if (!this.isActive || !this.analyzer || !this.frequencyData) return;
-
-      this.analyzer.getByteFrequencyData(this.frequencyData);
-
-      const result = this.pitchDetector.detectPitch(this.frequencyData);
-
-      if (result) {
-         this.updateDisplay(result.note, result.frequency, result.cents);
-         if (this.debugVisible) {
-            this.drawSpectrum(result);
-         }
-      }
-
-      requestAnimationFrame(() => this.analyze());
-   }
-
    drawSpectrum(result: PitchResult) {
       if (!this.spectrumCtx || !result?.debugData) return;
 
       const canvas = this.spectrumCanvas;
       const ctx = this.spectrumCtx;
-      const { frequencyData, sampleRate } = result.debugData;
+      const { hpsData, sampleRate } = result.debugData;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const nyquist = sampleRate / 2;
-      const frequencyStep = nyquist / frequencyData.length;
+      // Use exact frequency calculation from reference
+      const frequencyStep = sampleRate / (hpsData.length * 2);
 
-      // Frequency range to display (80-500 Hz)
-      const minFreq = 80;
+      // Frequency range to display (60-500 Hz) - matching reference
+      const minFreq = 60;
       const maxFreq = 500;
       const minBin = Math.floor(minFreq / frequencyStep);
       const maxBin = Math.floor(maxFreq / frequencyStep);
@@ -181,22 +194,25 @@ class GuitarTuner {
          }
       }
 
-      // Draw frequency spectrum bars
+      // Draw HPS spectrum bars
       const barWidth = canvas.width / displayBins;
-      let maxAmplitude = Math.max(...(Array.from(frequencyData.slice(minBin, maxBin + 1)) as number[]));
+      let maxAmplitude = 0;
+      for (let i = minBin; i <= maxBin && i < hpsData.length; i++) {
+         if (hpsData[i] > maxAmplitude) maxAmplitude = hpsData[i];
+      }
       if (maxAmplitude === 0) maxAmplitude = 1;
 
       // Draw spectrum bars
       for (let i = 0; i < displayBins; i++) {
          const binIndex = minBin + i;
-         const amplitude = frequencyData[binIndex] || 0;
+         const amplitude = binIndex < hpsData.length ? hpsData[binIndex] : 0;
          const height = (amplitude / maxAmplitude) * (canvas.height - 50);
          const x = i * barWidth;
 
          // Color based on amplitude
-         if (amplitude > 50) {
+         if (amplitude > maxAmplitude * 0.5) {
             ctx.fillStyle = "#22c55e"; // Green for strong signals
-         } else if (amplitude > 20) {
+         } else if (amplitude > maxAmplitude * 0.2) {
             ctx.fillStyle = "#eab308"; // Yellow for medium signals
          } else {
             ctx.fillStyle = "#374151"; // Gray for weak signals

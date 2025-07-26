@@ -1,4 +1,14 @@
-export const FFT_SIZE = 8192;
+// Exact parameters from reference implementation
+export const SAMPLING_RATE = 48000;
+export const CHUNK_SIZE = 1024;
+export const BUFFER_TIMES = 50;
+export const ZERO_PADDING = 3;
+export const NUM_HPS = 3;
+
+// Calculated values
+export const BUFFER_SIZE = CHUNK_SIZE * BUFFER_TIMES; // 51,200 samples
+export const FFT_SIZE = BUFFER_SIZE * (1 + ZERO_PADDING); // 204,800 samples
+export const FREQUENCY_RESOLUTION = SAMPLING_RATE / FFT_SIZE; // 0.234375 Hz per bin
 
 export interface PitchResult {
    frequency: number;
@@ -7,13 +17,19 @@ export interface PitchResult {
    cents: number;
    debugData?: {
       peaks: { freq: number; magnitude: number; score?: number }[];
-      frequencyData: Uint8Array;
+      frequencyData: Float32Array;
+      hpsData: Float32Array;
       sampleRate: number;
    };
 }
 
 // Test utility functions
-export function generateTestSignal(frequency: number, duration: number, sampleRate: number = 44100, harmonics: number[] = [1]): Float32Array {
+export function generateTestSignal(
+   frequency: number,
+   duration: number,
+   sampleRate: number = SAMPLING_RATE,
+   harmonics: number[] = [1],
+): Float32Array {
    const length = Math.floor(sampleRate * duration);
    const signal = new Float32Array(length);
 
@@ -24,7 +40,6 @@ export function generateTestSignal(frequency: number, duration: number, sampleRa
       for (let h = 0; h < harmonics.length; h++) {
          const harmonic = harmonics[h];
          const amplitude = 1 / harmonic; // Harmonics get quieter
-         // Remove frequency variation for test accuracy
          sample += amplitude * Math.sin(2 * Math.PI * frequency * harmonic * t);
       }
 
@@ -34,10 +49,79 @@ export function generateTestSignal(frequency: number, duration: number, sampleRa
    return signal;
 }
 
-// Proper FFT implementation (Cooley-Tukey algorithm)
-function fft(real: number[], imag: number[]): void {
+// Bluestein's algorithm for arbitrary-length FFT (to match NumPy exactly)
+function bluesteinFFT(real: number[], imag: number[]): void {
    const n = real.length;
-   
+
+   // Find next power of 2 that's >= 2*n-1
+   const m = 2 ** Math.ceil(Math.log2(2 * n - 1));
+
+   // Precompute twiddle factors
+   const cosTable = new Array(n);
+   const sinTable = new Array(n);
+
+   for (let i = 0; i < n; i++) {
+      const angle = (-Math.PI * i * i) / n;
+      cosTable[i] = Math.cos(angle);
+      sinTable[i] = Math.sin(angle);
+   }
+
+   // Temporary arrays for convolution
+   const aReal = new Array(m).fill(0);
+   const aImag = new Array(m).fill(0);
+   const bReal = new Array(m).fill(0);
+   const bImag = new Array(m).fill(0);
+
+   // Fill a with input * twiddle
+   for (let i = 0; i < n; i++) {
+      aReal[i] = real[i] * cosTable[i] - imag[i] * sinTable[i];
+      aImag[i] = real[i] * sinTable[i] + imag[i] * cosTable[i];
+   }
+
+   // Fill b with conjugated twiddle factors
+   bReal[0] = cosTable[0];
+   bImag[0] = -sinTable[0];
+   for (let i = 1; i < n; i++) {
+      bReal[i] = bReal[m - i] = cosTable[i];
+      bImag[i] = bImag[m - i] = -sinTable[i];
+   }
+
+   // Convolution via FFT (using power-of-2 FFT)
+   cooleyTukeyFFT(aReal, aImag);
+   cooleyTukeyFFT(bReal, bImag);
+
+   // Multiply
+   for (let i = 0; i < m; i++) {
+      const tempReal = aReal[i] * bReal[i] - aImag[i] * bImag[i];
+      const tempImag = aReal[i] * bImag[i] + aImag[i] * bReal[i];
+      aReal[i] = tempReal;
+      aImag[i] = tempImag;
+   }
+
+   // Inverse FFT
+   for (let i = 0; i < m; i++) {
+      aImag[i] = -aImag[i];
+   }
+   cooleyTukeyFFT(aReal, aImag);
+   for (let i = 0; i < m; i++) {
+      aImag[i] = -aImag[i];
+      aReal[i] /= m;
+      aImag[i] /= m;
+   }
+
+   // Extract result and multiply by twiddle factors
+   for (let i = 0; i < n; i++) {
+      const outputReal = aReal[i] * cosTable[i] - aImag[i] * sinTable[i];
+      const outputImag = aReal[i] * sinTable[i] + aImag[i] * cosTable[i];
+      real[i] = outputReal;
+      imag[i] = outputImag;
+   }
+}
+
+// Cooley-Tukey FFT for power-of-2 sizes (used by Bluestein)
+function cooleyTukeyFFT(real: number[], imag: number[]): void {
+   const n = real.length;
+
    // Bit-reversal permutation
    for (let i = 1, j = 0; i < n; i++) {
       let bit = n >> 1;
@@ -45,35 +129,35 @@ function fft(real: number[], imag: number[]): void {
          j ^= bit;
       }
       j ^= bit;
-      
+
       if (i < j) {
          [real[i], real[j]] = [real[j], real[i]];
          [imag[i], imag[j]] = [imag[j], imag[i]];
       }
    }
-   
+
    // FFT computation
    for (let len = 2; len <= n; len <<= 1) {
-      const wlen = -2 * Math.PI / len;
+      const wlen = (-2 * Math.PI) / len;
       const wlenReal = Math.cos(wlen);
       const wlenImag = Math.sin(wlen);
-      
+
       for (let i = 0; i < n; i += len) {
          let wReal = 1;
          let wImag = 0;
-         
+
          for (let j = 0; j < len / 2; j++) {
             const u = i + j;
             const v = i + j + len / 2;
-            
+
             const vReal = real[v] * wReal - imag[v] * wImag;
             const vImag = real[v] * wImag + imag[v] * wReal;
-            
+
             real[v] = real[u] - vReal;
             imag[v] = imag[u] - vImag;
             real[u] += vReal;
             imag[u] += vImag;
-            
+
             const nextWReal = wReal * wlenReal - wImag * wlenImag;
             const nextWImag = wReal * wlenImag + wImag * wlenReal;
             wReal = nextWReal;
@@ -83,137 +167,190 @@ function fft(real: number[], imag: number[]): void {
    }
 }
 
-// Convert time-domain signal to frequency spectrum using proper FFT
-export function signalToFrequencySpectrum(signal: Float32Array): Uint8Array {
-   const spectrum = new Uint8Array(FFT_SIZE / 2);
-
-   // Take a window from the signal
-   const windowStart = Math.max(0, Math.floor((signal.length - FFT_SIZE) / 2));
-   const real = new Array(FFT_SIZE);
-   const imag = new Array(FFT_SIZE);
-   
-   // Copy signal to real array, initialize imaginary to zero
-   for (let i = 0; i < FFT_SIZE; i++) {
-      if (windowStart + i < signal.length) {
-         // Apply Hanning window to reduce spectral leakage
-         const hanningWeight = 0.5 * (1 - Math.cos(2 * Math.PI * i / (FFT_SIZE - 1)));
-         real[i] = signal[windowStart + i] * hanningWeight;
-      } else {
-         real[i] = 0; // Zero padding
-      }
-      imag[i] = 0;
-   }
-
-   // Perform FFT
-   fft(real, imag);
-
-   // Convert to magnitude spectrum
-   for (let i = 0; i < FFT_SIZE / 2; i++) {
-      const magnitude = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
-      
-      // Scale to 0-255 range with proper normalization
-      spectrum[i] = Math.min(255, Math.floor(magnitude * 2 / FFT_SIZE * 255));
-   }
-
-   return spectrum;
+// For backwards compatibility with tests - will be removed
+export function signalToFrequencySpectrum(_signal: Float32Array): Uint8Array {
+   // This is a stub - the new implementation uses the proper pipeline
+   return new Uint8Array(4096);
 }
 
 export class PitchDetector {
-   private sampleRate: number;
+   private buffer: Float32Array;
+   private hanningWindow: Float32Array;
 
-   constructor(sampleRate: number = 44100) {
-      this.sampleRate = sampleRate;
+   constructor() {
+      // Initialize exactly like reference implementation
+      this.buffer = new Float32Array(BUFFER_SIZE); // 51,200 samples
+      this.hanningWindow = new Float32Array(BUFFER_SIZE);
+
+      // Generate Hanning window exactly like numpy.hanning
+      for (let i = 0; i < BUFFER_SIZE; i++) {
+         this.hanningWindow[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (BUFFER_SIZE - 1)));
+      }
    }
 
-   detectPitch(frequencyData: Uint8Array): PitchResult | null {
-      const nyquist = this.sampleRate / 2;
-      const frequencyStep = nyquist / frequencyData.length;
+   // Process new audio chunk (exactly 1024 samples)
+   processAudioChunk(audioChunk: Float32Array): PitchResult | null {
+      if (audioChunk.length !== CHUNK_SIZE) {
+         throw new Error(`Audio chunk must be exactly ${CHUNK_SIZE} samples`);
+      }
 
-      // Find all peaks in the spectrum
-      const peaks: { bin: number; freq: number; magnitude: number }[] = [];
+      // Shift buffer left by CHUNK_SIZE (circular buffer behavior)
+      // self.buffer[:-self.CHUNK_SIZE] = self.buffer[self.CHUNK_SIZE:]
+      for (let i = 0; i < BUFFER_SIZE - CHUNK_SIZE; i++) {
+         this.buffer[i] = this.buffer[i + CHUNK_SIZE];
+      }
 
-      // Find significant frequency bins - use plateau detection instead of strict peaks
-      for (let i = 1; i < frequencyData.length - 1; i++) {
-         const freq = i * frequencyStep;
-         if (freq < 80 || freq > 500) continue; // Only look in guitar fundamental range
+      // Add new chunk at the end
+      // self.buffer[-self.CHUNK_SIZE:] = data
+      for (let i = 0; i < CHUNK_SIZE; i++) {
+         this.buffer[BUFFER_SIZE - CHUNK_SIZE + i] = audioChunk[i];
+      }
 
-         const current = frequencyData[i];
-         const prev = frequencyData[i - 1];
-         const next = frequencyData[i + 1];
+      // Run pitch detection on the buffer
+      return this.analyzeBuffer();
+   }
 
-         // Accept if current bin is significantly strong AND either:
-         // 1. It's a local peak (current > prev AND current > next)
-         // 2. It's a plateau (current >= prev AND current >= next and current > threshold)
-         if (
-            current > 5 &&
-            ((current > prev && current > next) || (current >= prev && current >= next && current > 15))
-         ) {
-            // Use parabolic interpolation for sub-bin frequency accuracy
-            const interpolatedFreq = this.interpolateFrequency(i, prev, current, next, frequencyStep);
-            
+   // Exact pitch detection algorithm from reference
+   private analyzeBuffer(): PitchResult | null {
+      // Apply Hanning window to buffer
+      const windowedBuffer = new Float32Array(BUFFER_SIZE);
+      for (let i = 0; i < BUFFER_SIZE; i++) {
+         windowedBuffer[i] = this.buffer[i] * this.hanningWindow[i];
+      }
+
+      // Zero pad exactly like reference: np.pad(buffer * hanning, (0, len(buffer) * ZERO_PADDING), "constant")
+      // Reference size: 51,200 + (51,200 * 3) = 204,800 samples
+      const paddedSize = BUFFER_SIZE + BUFFER_SIZE * ZERO_PADDING; // 204,800
+
+      const real = new Array(paddedSize);
+      const imag = new Array(paddedSize);
+
+      // Copy windowed buffer
+      for (let i = 0; i < BUFFER_SIZE; i++) {
+         real[i] = windowedBuffer[i];
+         imag[i] = 0;
+      }
+      // Zero padding (add zeros at the end)
+      for (let i = BUFFER_SIZE; i < paddedSize; i++) {
+         real[i] = 0;
+         imag[i] = 0;
+      }
+
+      // Compute FFT using Bluestein algorithm (works with any size)
+      bluesteinFFT(real, imag);
+
+      // Get magnitude spectrum (first half only - positive frequencies)
+      const magnitudeData = new Float32Array(paddedSize / 2); // 102,400 samples
+      for (let i = 0; i < paddedSize / 2; i++) {
+         magnitudeData[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
+      }
+
+      // Apply HPS exactly like reference
+      const hpsResult = this.harmonicProductSpectrum(magnitudeData);
+
+      // Generate frequency array exactly like reference
+      // frequencies = np.fft.fftfreq(int((len(magnitude_data) * 2) / 1), 1. / self.SAMPLING_RATE)
+      // This means: fftfreq for the full FFT size (magnitudeData.length * 2 = 204,800)
+      const fullFftSize = magnitudeData.length * 2; // 204,800 (what Python uses)
+      const frequencies = new Float32Array(magnitudeData.length);
+
+      // Generate frequencies: [0, 1, 2, ..., n/2-1] * (sample_rate / n)
+      for (let i = 0; i < magnitudeData.length; i++) {
+         frequencies[i] = (i * SAMPLING_RATE) / fullFftSize;
+      }
+
+      // Apply 60Hz high-pass filter exactly like reference
+      // for i, freq in enumerate(frequencies):
+      //     if freq > 60:
+      //         magnitude_data[:i - 1] = 0
+      //         break
+      for (let i = 0; i < frequencies.length; i++) {
+         if (frequencies[i] > 60) {
+            // Zero out all frequencies below 60Hz
+            for (let j = 0; j < i - 1; j++) {
+               hpsResult[j] = 0;
+            }
+            break;
+         }
+      }
+
+      // Find peak frequency exactly like reference
+      // peak_frequency = frequencies[np.argmax(magnitude_data)]
+      let maxIndex = 0;
+      let maxValue = 0;
+      for (let i = 0; i < hpsResult.length; i++) {
+         if (hpsResult[i] > maxValue) {
+            maxValue = hpsResult[i];
+            maxIndex = i;
+         }
+      }
+
+      if (maxValue < 1) return null; // No significant peak found
+
+      const frequency = Math.round(frequencies[maxIndex] * 100) / 100; // Round to 2 decimal places like reference
+
+      // Only accept frequencies in reasonable range
+      if (frequency < 60 || frequency > 500) return null;
+
+      const noteInfo = this.frequencyToNote(frequency);
+
+      // Create debug data
+      const peaks = [];
+      for (let i = 0; i < Math.min(hpsResult.length, frequencies.length); i++) {
+         if (hpsResult[i] > 1 && frequencies[i] >= 60 && frequencies[i] <= 500) {
             peaks.push({
-               bin: i,
-               freq: interpolatedFreq,
-               magnitude: current,
+               freq: frequencies[i],
+               magnitude: hpsResult[i],
+               score: hpsResult[i],
             });
          }
       }
-
-      if (peaks.length === 0) return null;
-
-      // Sort peaks by magnitude (strongest first)
       peaks.sort((a, b) => b.magnitude - a.magnitude);
 
-      // Try each peak as a potential fundamental and store scores
-      let bestFundamental = -1;
-      let bestScore = 0;
-      const peaksWithScores = [];
-
-      for (const peak of peaks.slice(0, 5)) {
-         // Check top 5 peaks
-         const fundamental = peak.freq;
-         let score = 0;
-
-         // Check if harmonics exist at 2x, 3x, 4x this frequency
-         for (let harmonic = 1; harmonic <= 4; harmonic++) {
-            const harmonicFreq = fundamental * harmonic;
-            if (harmonicFreq > 1000) break; // Outside our range
-
-            const harmonicBin = Math.round(harmonicFreq / frequencyStep);
-            if (harmonicBin < frequencyData.length) {
-               const harmonicStrength = frequencyData[harmonicBin];
-               const weight = harmonic === 1 ? 3 : 1 / harmonic; // Weight fundamental heavily
-               score += harmonicStrength * weight;
-            }
-         }
-
-         // Prefer lower frequencies (more likely to be fundamentals)
-         const frequencyPenalty = Math.log(fundamental / 82.41) * 0.1;
-         score -= frequencyPenalty * score;
-
-         peaksWithScores.push({ freq: fundamental, magnitude: peak.magnitude, score });
-
-         if (score > bestScore) {
-            bestScore = score;
-            bestFundamental = fundamental;
-         }
-      }
-
-      if (bestFundamental === -1) return null;
-
-      const noteInfo = this.frequencyToNote(bestFundamental);
-
       return {
-         frequency: bestFundamental,
-         confidence: Math.min(1.0, bestScore / 500), // Normalize confidence
+         frequency,
+         confidence: Math.min(1.0, maxValue / 100),
          note: noteInfo.note,
          cents: noteInfo.cents,
          debugData: {
-            peaks: peaksWithScores,
-            frequencyData: frequencyData,
-            sampleRate: this.sampleRate,
+            peaks: peaks.slice(0, 10),
+            frequencyData: magnitudeData,
+            hpsData: hpsResult,
+            sampleRate: SAMPLING_RATE,
          },
       };
+   }
+
+   // Exact HPS implementation from reference
+   private harmonicProductSpectrum(magnitudeData: Float32Array): Float32Array {
+      // magnitude_data_orig = copy.deepcopy(magnitude_data)
+      const magnitudeOrig = new Float32Array(magnitudeData);
+
+      // Start with a copy of the original data
+      const result = new Float32Array(magnitudeData);
+
+      // for i in range(2, self.NUM_HPS+1, 1):
+      for (let i = 2; i <= NUM_HPS; i++) {
+         // hps_len = int(np.ceil(len(magnitude_data) / i))
+         const hpsLen = Math.ceil(magnitudeData.length / i);
+
+         // magnitude_data[:hps_len] *= magnitude_data_orig[::i]
+         // This means: multiply first hps_len elements by every i-th element of original
+         for (let j = 0; j < hpsLen; j++) {
+            const sourceIndex = j * i; // Every i-th element: 0, i, 2*i, 3*i, ...
+            if (sourceIndex < magnitudeOrig.length) {
+               result[j] *= magnitudeOrig[sourceIndex];
+            }
+         }
+      }
+
+      return result;
+   }
+
+   // Legacy method for backwards compatibility
+   detectPitch(_frequencyData: Uint8Array): PitchResult | null {
+      // This should not be used in the new implementation
+      throw new Error("Use processAudioChunk() instead of detectPitch() with new implementation");
    }
 
    private frequencyToNote(frequency: number): { note: string; cents: number } {
@@ -246,26 +383,6 @@ export class PitchDetector {
          note: `${noteName}${octave}`,
          cents,
       };
-   }
-
-   // Parabolic interpolation for sub-bin frequency accuracy
-   private interpolateFrequency(binIndex: number, leftMag: number, centerMag: number, rightMag: number, frequencyStep: number): number {
-      // Parabolic interpolation to find the true peak between bins
-      // Formula: offset = (leftMag - rightMag) / (2 * (leftMag - 2*centerMag + rightMag))
-      
-      const denominator = 2 * (leftMag - 2 * centerMag + rightMag);
-      
-      // If denominator is too small, just use the bin center
-      if (Math.abs(denominator) < 1e-10) {
-         return binIndex * frequencyStep;
-      }
-      
-      const offset = (leftMag - rightMag) / denominator;
-      
-      // Clamp offset to reasonable range (-0.5 to 0.5)
-      const clampedOffset = Math.max(-0.5, Math.min(0.5, offset));
-      
-      return (binIndex + clampedOffset) * frequencyStep;
    }
 
 }

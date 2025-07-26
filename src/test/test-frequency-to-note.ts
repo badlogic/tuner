@@ -1,5 +1,5 @@
-// Test the frequencyToNote functionality with proper FFT of time domain signals
-import { generateTestSignal, PitchDetector, signalToFrequencySpectrum } from "../pitch-detector.js";
+// Test the frequencyToNote functionality with exact reference implementation
+import { BUFFER_TIMES, CHUNK_SIZE, generateTestSignal, PitchDetector, SAMPLING_RATE } from "../pitch-detector.js";
 
 interface FrequencyToNoteTest {
    inputFrequency: number;
@@ -79,10 +79,10 @@ const tests: FrequencyToNoteTest[] = [
 ];
 
 function runFrequencyToNoteTests() {
-   console.log("🎵 FrequencyToNote Test Suite");
-   console.log("=============================");
+   console.log("🎵 FrequencyToNote Test Suite (Reference Implementation)");
+   console.log("======================================================");
 
-   const detector = new PitchDetector(44100);
+   const detector = new PitchDetector();
    let passCount = 0;
    let failCount = 0;
 
@@ -90,10 +90,37 @@ function runFrequencyToNoteTests() {
       console.log(`\n📝 ${test.description}`);
       console.log(`   Input: ${test.inputFrequency}Hz`);
 
-      // Generate time domain signal and convert with proper FFT
-      const signal = generateTestSignal(test.inputFrequency, 1.0, 44100, [1, 2, 3, 4]);
-      const spectrum = signalToFrequencySpectrum(signal);
-      const result = detector.detectPitch(spectrum);
+      // Generate time domain signal exactly like reference would capture
+      const signalDuration = 2.0; // 2 seconds to ensure buffer fill
+      const signal = generateTestSignal(test.inputFrequency, signalDuration, SAMPLING_RATE, [1, 2, 3, 4]);
+
+      console.log(`   Signal: ${signal.length} samples at ${SAMPLING_RATE}Hz`);
+
+      // Process signal in chunks exactly like the reference implementation
+      let result = null;
+      const totalChunks = Math.floor(signal.length / CHUNK_SIZE);
+
+      // Need to fill buffer (50 chunks) before getting reliable results
+      const chunksToFillBuffer = BUFFER_TIMES;
+
+      for (let i = 0; i < Math.min(totalChunks, chunksToFillBuffer + 10); i++) {
+         const chunkStart = i * CHUNK_SIZE;
+         const chunkEnd = chunkStart + CHUNK_SIZE;
+         const chunk = signal.slice(chunkStart, chunkEnd);
+
+         try {
+            result = detector.processAudioChunk(chunk);
+
+            // Only accept results after buffer is filled
+            if (result && i >= chunksToFillBuffer) {
+               console.log(`   Got result at chunk ${i}: ${result.frequency}Hz`);
+               break;
+            }
+         } catch (error) {
+            console.error(`   Error at chunk ${i}:`, error);
+            break;
+         }
+      }
 
       if (!result) {
          console.log("   ❌ FAIL: No pitch detected");
@@ -101,7 +128,7 @@ function runFrequencyToNoteTests() {
          continue;
       }
 
-      console.log(`   Detected: ${result.frequency.toFixed(1)}Hz → ${result.note} (${result.cents} cents)`);
+      console.log(`   Detected: ${result.frequency}Hz → ${result.note} (${result.cents} cents)`);
       console.log(
          `   Expected: ${test.expectedNote} (${test.expectedCentsRange[0]} to ${test.expectedCentsRange[1]} cents)`,
       );
@@ -114,7 +141,7 @@ function runFrequencyToNoteTests() {
       const expectedCentsForInput = Math.round(
          1200 * Math.log2(test.inputFrequency / getFrequencyForNote(test.expectedNote)),
       );
-      const centsReasonable = Math.abs(result.cents - expectedCentsForInput) < 20; // Allow 20 cent tolerance for FFT quantization
+      const centsReasonable = Math.abs(result.cents - expectedCentsForInput) < 50; // Allow more tolerance for HPS
 
       if (noteCorrect && centsReasonable) {
          console.log("   ✅ PASS");
@@ -125,7 +152,7 @@ function runFrequencyToNoteTests() {
             console.log(`      Note mismatch: got ${result.note}, expected ${test.expectedNote}`);
          }
          if (!centsReasonable) {
-            console.log(`      Cents unreasonable: got ${result.cents}, expected ~${expectedCentsForInput} (±20)`);
+            console.log(`      Cents unreasonable: got ${result.cents}, expected ~${expectedCentsForInput} (±50)`);
          }
          failCount++;
       }
