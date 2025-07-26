@@ -13,12 +13,7 @@ export interface PitchResult {
 }
 
 // Test utility functions
-export function generateTestSignal(
-   frequency: number,
-   duration: number,
-   sampleRate: number = 44100,
-   harmonics: number[] = [1],
-): Float32Array {
+export function generateTestSignal(frequency: number, duration: number, sampleRate: number = 44100, harmonics: number[] = [1]): Float32Array {
    const length = Math.floor(sampleRate * duration);
    const signal = new Float32Array(length);
 
@@ -42,7 +37,7 @@ export function generateTestSignal(
 // Proper FFT implementation (Cooley-Tukey algorithm)
 function fft(real: number[], imag: number[]): void {
    const n = real.length;
-
+   
    // Bit-reversal permutation
    for (let i = 1, j = 0; i < n; i++) {
       let bit = n >> 1;
@@ -50,35 +45,35 @@ function fft(real: number[], imag: number[]): void {
          j ^= bit;
       }
       j ^= bit;
-
+      
       if (i < j) {
          [real[i], real[j]] = [real[j], real[i]];
          [imag[i], imag[j]] = [imag[j], imag[i]];
       }
    }
-
+   
    // FFT computation
    for (let len = 2; len <= n; len <<= 1) {
-      const wlen = (-2 * Math.PI) / len;
+      const wlen = -2 * Math.PI / len;
       const wlenReal = Math.cos(wlen);
       const wlenImag = Math.sin(wlen);
-
+      
       for (let i = 0; i < n; i += len) {
          let wReal = 1;
          let wImag = 0;
-
+         
          for (let j = 0; j < len / 2; j++) {
             const u = i + j;
             const v = i + j + len / 2;
-
+            
             const vReal = real[v] * wReal - imag[v] * wImag;
             const vImag = real[v] * wImag + imag[v] * wReal;
-
+            
             real[v] = real[u] - vReal;
             imag[v] = imag[u] - vImag;
             real[u] += vReal;
             imag[u] += vImag;
-
+            
             const nextWReal = wReal * wlenReal - wImag * wlenImag;
             const nextWImag = wReal * wlenImag + wImag * wlenReal;
             wReal = nextWReal;
@@ -96,12 +91,12 @@ export function signalToFrequencySpectrum(signal: Float32Array): Uint8Array {
    const windowStart = Math.max(0, Math.floor((signal.length - FFT_SIZE) / 2));
    const real = new Array(FFT_SIZE);
    const imag = new Array(FFT_SIZE);
-
+   
    // Copy signal to real array, initialize imaginary to zero
    for (let i = 0; i < FFT_SIZE; i++) {
       if (windowStart + i < signal.length) {
          // Apply Hanning window to reduce spectral leakage
-         const hanningWeight = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (FFT_SIZE - 1)));
+         const hanningWeight = 0.5 * (1 - Math.cos(2 * Math.PI * i / (FFT_SIZE - 1)));
          real[i] = signal[windowStart + i] * hanningWeight;
       } else {
          real[i] = 0; // Zero padding
@@ -115,9 +110,9 @@ export function signalToFrequencySpectrum(signal: Float32Array): Uint8Array {
    // Convert to magnitude spectrum
    for (let i = 0; i < FFT_SIZE / 2; i++) {
       const magnitude = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
-
+      
       // Scale to 0-255 range with proper normalization
-      spectrum[i] = Math.min(255, Math.floor(((magnitude * 2) / FFT_SIZE) * 255));
+      spectrum[i] = Math.min(255, Math.floor(magnitude * 2 / FFT_SIZE * 255));
    }
 
    return spectrum;
@@ -155,7 +150,7 @@ export class PitchDetector {
          ) {
             // Use parabolic interpolation for sub-bin frequency accuracy
             const interpolatedFreq = this.interpolateFrequency(i, prev, current, next, frequencyStep);
-
+            
             peaks.push({
                bin: i,
                freq: interpolatedFreq,
@@ -254,28 +249,23 @@ export class PitchDetector {
    }
 
    // Parabolic interpolation for sub-bin frequency accuracy
-   private interpolateFrequency(
-      binIndex: number,
-      leftMag: number,
-      centerMag: number,
-      rightMag: number,
-      frequencyStep: number,
-   ): number {
+   private interpolateFrequency(binIndex: number, leftMag: number, centerMag: number, rightMag: number, frequencyStep: number): number {
       // Parabolic interpolation to find the true peak between bins
       // Formula: offset = (leftMag - rightMag) / (2 * (leftMag - 2*centerMag + rightMag))
-
+      
       const denominator = 2 * (leftMag - 2 * centerMag + rightMag);
-
+      
       // If denominator is too small, just use the bin center
       if (Math.abs(denominator) < 1e-10) {
          return binIndex * frequencyStep;
       }
-
+      
       const offset = (leftMag - rightMag) / denominator;
-
+      
       // Clamp offset to reasonable range (-0.5 to 0.5)
       const clampedOffset = Math.max(-0.5, Math.min(0.5, offset));
-
+      
       return (binIndex + clampedOffset) * frequencyStep;
    }
+
 }

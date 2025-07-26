@@ -1,10 +1,30 @@
-# tuner
+# Guitar Tuner
 
-Static site with TypeScript, Tailwind 4, live reload, and Docker deployment.
+Browser-based guitar tuner using Web Audio API.
 
-## Workflow
+https://tuner.mariozechner.at
 
-### 1. Development
+## Usage
+
+1. Click START
+2. Allow microphone access
+3. Play a guitar string
+4. Tune until the needle is green and centered
+
+Requires a browser with Web Audio API support.
+
+## Development
+
+### Quick Deployment
+
+```bash
+npm run build
+# Copy dist/ files to any web server
+```
+
+### Full Development Setup
+
+#### Development Workflow
 
 ```bash
 # Start dev environment (Docker + live reload)
@@ -22,7 +42,7 @@ cd ../tuner-feature
 PORT=8081 ./run.sh dev  # Runs independently with its own dist/
 ```
 
-### 2. Production Deployment
+#### Production Deployment
 
 ```bash
 # Deploy to your server (builds automatically)
@@ -35,23 +55,34 @@ The deploy command:
 3. Restarts services with Docker Compose
 4. Caddy automatically handles SSL and routing
 
+To deploy to your own server, edit the server details in `run.sh` and set up SSH keys. Expects server configured per [create-app](https://github.com/badlogic/create-app).
+
 ## Project Structure
 
 ```
 tuner/
-├── src/             # Source files
-│   ├── index.html   # Main HTML
-│   ├── index.ts     # TypeScript (includes live reload)
-│   └── styles.css   # Tailwind CSS
-├── dist/            # Build output (git ignored)
-├── infra/           # Infrastructure
-│   ├── build.js     # Build script
-│   ├── Caddyfile    # Caddy web server configuration
-│   ├── docker-compose.yml      # Base configuration
-│   ├── docker-compose.dev.yml  # Development overrides
-│   └── docker-compose.prod.yml # Production overrides
-├── run.sh           # All-in-one CLI
-└── package.json     # Dependencies
+├── src/                          # Source files
+│   ├── frontend/                 # Frontend application
+│   │   ├── index.html           # Main HTML with SVG tuner display
+│   │   ├── index.ts             # Main TypeScript application
+│   │   └── styles.css           # Tailwind CSS styles
+│   ├── pitch-detector.ts         # Core pitch detection algorithm
+│   └── test/                     # Test suite
+│       └── test-frequency-to-note.ts  # Comprehensive pitch detection tests
+├── dist/                         # Build output (git ignored)
+│   ├── index.html               # Built HTML
+│   ├── index.js                 # Bundled JavaScript
+│   └── styles.css               # Compiled CSS
+├── infra/                        # Infrastructure
+│   ├── build.js                 # Build script
+│   ├── Caddyfile                # Caddy web server configuration
+│   ├── docker-compose.yml       # Base configuration
+│   ├── docker-compose.dev.yml   # Development overrides
+│   └── docker-compose.prod.yml  # Production overrides
+├── run.sh                        # All-in-one CLI
+├── package.json                  # Dependencies and scripts
+├── LICENSE                       # MIT License
+└── README.md                     # This file
 ```
 
 ## Commands
@@ -60,27 +91,12 @@ tuner/
 ./run.sh dev              # Start dev server at localhost:8080
 PORT=8081 ./run.sh dev    # Start on custom port
 ./run.sh prod             # Run production locally
-./run.sh deploy           # Deploy to tuner.mariozechner.at
-./run.sh sync             # Sync files (dist/, infra/) to tuner.mariozechner.at
+./run.sh deploy           # Deploy to configured server
+./run.sh sync             # Sync files (dist/, infra/) to configured server
 ./run.sh stop             # Stop containers locally
 ./run.sh logs             # View container logs locally
 ```
 
-Deploys to `/home/badlogic/tuner.mariozechner.at/` on `slayer.marioslab.io`. Caddy automatically routes `tuner.mariozechner.at` traffic to this container with SSL.
+## License
 
-## Tech Stack
-
-- **TypeScript** with tsup bundler
-- **Tailwind 4** with automatic compilation
-- **Caddy** web server with automatic HTTPS
-- **Live reload** via WebSocket proxy (no separate port)
-- **Docker** for dev/prod parity
-- **Caddy** reverse proxy with automatic SSL
-
-## Architecture Notes
-
-- All traffic goes through Caddy (port 80), including WebSocket connections
-- Live reload WebSocket is proxied at `/livereload` endpoint
-- Multiple instances can run simultaneously with different PORT values
-- Each instance gets its own Docker containers (project-name includes port)
-- Git worktrees recommended for parallel feature development
+MIT License - see [LICENSE](LICENSE) file for details.
