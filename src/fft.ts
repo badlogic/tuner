@@ -183,8 +183,6 @@ async function loadWasmFFT(): Promise<void> {
       // Use our pre-allocated memory and init allocator (no growing needed)
       wasmMemory = memory;
       wasmAllocator.init(wasmMemory, false);
-
-      console.log("✅ WASM FFT loaded");
    } catch (error) {
       console.warn("❌ WASM FFT failed:", error);
    }

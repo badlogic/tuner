@@ -1,26 +1,11 @@
 #include "memory.h"
 
-// Convenience function for allocating floats
-float* alloc_floats(int count) {
-    void* ptr = malloc(count * sizeof(float));
-    return (float*)ptr;
-}
-
 // Import JavaScript Math functions
 __attribute__((import_module("Math"), import_name("sin")))
-double js_sin(double x);
+double sin(double x);
 
 __attribute__((import_module("Math"), import_name("cos")))
-double js_cos(double x);
-
-// Fast math functions using JS imports
-float cosf_approx(float x) {
-    return (float)js_cos((double)x);
-}
-
-float sinf_approx(float x) {
-    return (float)js_sin((double)x);
-}
+double cos(double x);
 
 // Cooley-Tukey FFT (power-of-2 only)
 void cooley_tukey_fft(float* real, float* imag, int n) {
@@ -41,8 +26,8 @@ void cooley_tukey_fft(float* real, float* imag, int n) {
     // FFT computation
     for (int len = 2; len <= n; len *= 2) {
         float angle = -2.0f * 3.14159265359f / len;
-        float wr = cosf_approx(angle);
-        float wi = sinf_approx(angle);
+        float wr = cos(angle);
+        float wi = sin(angle);
 
         for (int i = 0; i < n; i += len) {
             float ur = 1.0f, ui = 0.0f;
@@ -95,10 +80,10 @@ void bluestein_fft(float* real, float* imag, int n) {
     }
 
     // Allocate arrays from static pool
-    float* a_real = alloc_floats(pow2);
-    float* a_imag = alloc_floats(pow2);
-    float* b_real = alloc_floats(pow2);
-    float* b_imag = alloc_floats(pow2);
+    float* a_real = malloc(pow2 * sizeof(float));
+    float* a_imag = malloc(pow2 * sizeof(float));
+    float* b_real = malloc(pow2 * sizeof(float));
+    float* b_imag = malloc(pow2 * sizeof(float));
 
     // Zero arrays
     for (int i = 0; i < pow2; i++) {
@@ -109,8 +94,8 @@ void bluestein_fft(float* real, float* imag, int n) {
     // a[k] = x[k] * exp(-i * pi * k^2 / n)
     for (int k = 0; k < n; k++) {
         float theta = -3.14159265359f * k * k / n;
-        float wr = cosf_approx(theta);
-        float wi = sinf_approx(theta);
+        float wr = cos(theta);
+        float wi = sin(theta);
         a_real[k] = real[k] * wr - imag[k] * wi;
         a_imag[k] = real[k] * wi + imag[k] * wr;
     }
@@ -118,8 +103,8 @@ void bluestein_fft(float* real, float* imag, int n) {
     // b[k] = exp(i * pi * k^2 / n)
     for (int k = 0; k < n; k++) {
         float theta = 3.14159265359f * k * k / n;
-        float wr = cosf_approx(theta);
-        float wi = sinf_approx(theta);
+        float wr = cos(theta);
+        float wi = sin(theta);
         b_real[k] = wr;
         b_imag[k] = wi;
         if (k > 0 && k < n) {
@@ -133,8 +118,8 @@ void bluestein_fft(float* real, float* imag, int n) {
     cooley_tukey_fft(b_real, b_imag, pow2);
 
     // Pointwise multiplication: c = a * b
-    float* c_real = alloc_floats(pow2);
-    float* c_imag = alloc_floats(pow2);
+    float* c_real = malloc(pow2 * sizeof(float));
+    float* c_imag = malloc(pow2 * sizeof(float));
 
     for (int i = 0; i < pow2; i++) {
         c_real[i] = a_real[i] * b_real[i] - a_imag[i] * b_imag[i];
@@ -147,11 +132,19 @@ void bluestein_fft(float* real, float* imag, int n) {
     // Extract final result: y[k] = c[k] * exp(-i * pi * k^2 / n)
     for (int k = 0; k < n; k++) {
         float theta = -3.14159265359f * k * k / n;
-        float wr = cosf_approx(theta);
-        float wi = sinf_approx(theta);
+        float wr = cos(theta);
+        float wi = sin(theta);
         real[k] = c_real[k] * wr - c_imag[k] * wi;
         imag[k] = c_real[k] * wi + c_imag[k] * wr;
     }
+
+    // Free temporary arrays
+    free(a_real);
+    free(a_imag);
+    free(b_real);
+    free(b_imag);
+    free(c_real);
+    free(c_imag);
 }
 
 // Export functions for WASM

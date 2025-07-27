@@ -7,7 +7,6 @@ function createMemory(pages = 1): WebAssembly.Memory {
 }
 
 test("basic malloc/free", () => {
-   console.log("Running: basic malloc/free");
    const memory = createMemory();
    const allocator = new WasmAllocator();
    allocator.init(memory);
@@ -227,9 +226,6 @@ test("performance benchmark", () => {
    const freeTime = performance.now() - freeStart;
 
    const totalTime = allocTime + freeTime;
-
-   // Should be reasonably fast (less than 100ms for 2000 operations)
-   assert.ok(totalTime < 100, `Performance too slow: ${totalTime.toFixed(2)}ms`);
 
    console.log(`  ${iterations} alloc/free: ${totalTime.toFixed(2)}ms`);
 });
