@@ -1,3 +1,5 @@
+import type { FFTImplementation } from "./fft.js";
+
 // Exact parameters from reference implementation
 export const SAMPLING_RATE = 48000;
 export const CHUNK_SIZE = 1024;
@@ -49,142 +51,52 @@ export function generateTestSignal(
    return signal;
 }
 
-// Bluestein's algorithm for arbitrary-length FFT (to match NumPy exactly)
-function bluesteinFFT(real: number[], imag: number[]): void {
-   const n = real.length;
-
-   // Find next power of 2 that's >= 2*n-1
-   const m = 2 ** Math.ceil(Math.log2(2 * n - 1));
-
-   // Precompute twiddle factors
-   const cosTable = new Array(n);
-   const sinTable = new Array(n);
-
-   for (let i = 0; i < n; i++) {
-      const angle = (-Math.PI * i * i) / n;
-      cosTable[i] = Math.cos(angle);
-      sinTable[i] = Math.sin(angle);
-   }
-
-   // Temporary arrays for convolution
-   const aReal = new Array(m).fill(0);
-   const aImag = new Array(m).fill(0);
-   const bReal = new Array(m).fill(0);
-   const bImag = new Array(m).fill(0);
-
-   // Fill a with input * twiddle
-   for (let i = 0; i < n; i++) {
-      aReal[i] = real[i] * cosTable[i] - imag[i] * sinTable[i];
-      aImag[i] = real[i] * sinTable[i] + imag[i] * cosTable[i];
-   }
-
-   // Fill b with conjugated twiddle factors
-   bReal[0] = cosTable[0];
-   bImag[0] = -sinTable[0];
-   for (let i = 1; i < n; i++) {
-      bReal[i] = bReal[m - i] = cosTable[i];
-      bImag[i] = bImag[m - i] = -sinTable[i];
-   }
-
-   // Convolution via FFT (using power-of-2 FFT)
-   cooleyTukeyFFT(aReal, aImag);
-   cooleyTukeyFFT(bReal, bImag);
-
-   // Multiply
-   for (let i = 0; i < m; i++) {
-      const tempReal = aReal[i] * bReal[i] - aImag[i] * bImag[i];
-      const tempImag = aReal[i] * bImag[i] + aImag[i] * bReal[i];
-      aReal[i] = tempReal;
-      aImag[i] = tempImag;
-   }
-
-   // Inverse FFT
-   for (let i = 0; i < m; i++) {
-      aImag[i] = -aImag[i];
-   }
-   cooleyTukeyFFT(aReal, aImag);
-   for (let i = 0; i < m; i++) {
-      aImag[i] = -aImag[i];
-      aReal[i] /= m;
-      aImag[i] /= m;
-   }
-
-   // Extract result and multiply by twiddle factors
-   for (let i = 0; i < n; i++) {
-      const outputReal = aReal[i] * cosTable[i] - aImag[i] * sinTable[i];
-      const outputImag = aReal[i] * sinTable[i] + aImag[i] * cosTable[i];
-      real[i] = outputReal;
-      imag[i] = outputImag;
-   }
-}
-
-// Cooley-Tukey FFT for power-of-2 sizes (used by Bluestein)
-function cooleyTukeyFFT(real: number[], imag: number[]): void {
-   const n = real.length;
-
-   // Bit-reversal permutation
-   for (let i = 1, j = 0; i < n; i++) {
-      let bit = n >> 1;
-      for (; j & bit; bit >>= 1) {
-         j ^= bit;
-      }
-      j ^= bit;
-
-      if (i < j) {
-         [real[i], real[j]] = [real[j], real[i]];
-         [imag[i], imag[j]] = [imag[j], imag[i]];
-      }
-   }
-
-   // FFT computation
-   for (let len = 2; len <= n; len <<= 1) {
-      const wlen = (-2 * Math.PI) / len;
-      const wlenReal = Math.cos(wlen);
-      const wlenImag = Math.sin(wlen);
-
-      for (let i = 0; i < n; i += len) {
-         let wReal = 1;
-         let wImag = 0;
-
-         for (let j = 0; j < len / 2; j++) {
-            const u = i + j;
-            const v = i + j + len / 2;
-
-            const vReal = real[v] * wReal - imag[v] * wImag;
-            const vImag = real[v] * wImag + imag[v] * wReal;
-
-            real[v] = real[u] - vReal;
-            imag[v] = imag[u] - vImag;
-            real[u] += vReal;
-            imag[u] += vImag;
-
-            const nextWReal = wReal * wlenReal - wImag * wlenImag;
-            const nextWImag = wReal * wlenImag + wImag * wlenReal;
-            wReal = nextWReal;
-            wImag = nextWImag;
-         }
-      }
-   }
-}
-
-// For backwards compatibility with tests - will be removed
-export function signalToFrequencySpectrum(_signal: Float32Array): Uint8Array {
-   // This is a stub - the new implementation uses the proper pipeline
-   return new Uint8Array(4096);
+export interface PitchDetectorOptions {
+   fftImplementation: FFTImplementation;
+   debug?: boolean;
 }
 
 export class PitchDetector {
    private buffer: Float32Array;
    private hanningWindow: Float32Array;
+   private fftImpl: FFTImplementation;
+   private debug: boolean;
 
-   constructor() {
+   // Reusable arrays to avoid allocations
+   private windowedBuffer: Float32Array;
+   private fftReal: Float32Array;
+   private fftImag: Float32Array;
+   private magnitudeData: Float32Array;
+   private frequencies: Float32Array;
+
+   constructor(options: PitchDetectorOptions) {
       // Initialize exactly like reference implementation
       this.buffer = new Float32Array(BUFFER_SIZE); // 51,200 samples
       this.hanningWindow = new Float32Array(BUFFER_SIZE);
+      this.fftImpl = options.fftImplementation;
+      this.debug = options.debug || false;
+
+      // Pre-allocate reusable arrays
+      this.windowedBuffer = new Float32Array(BUFFER_SIZE); // 51,200
+      this.fftReal = this.fftImpl.allocFloats(FFT_SIZE); // 204,800
+      this.fftImag = this.fftImpl.allocFloats(FFT_SIZE); // 204,800
+      this.magnitudeData = new Float32Array(FFT_SIZE / 2); // 102,400
+      this.frequencies = new Float32Array(FFT_SIZE / 2); // 102,400
 
       // Generate Hanning window exactly like numpy.hanning
       for (let i = 0; i < BUFFER_SIZE; i++) {
          this.hanningWindow[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (BUFFER_SIZE - 1)));
+      }
+
+      // Pre-compute frequency array (doesn't change)
+      const fullFftSize = FFT_SIZE;
+      for (let i = 0; i < this.frequencies.length; i++) {
+         this.frequencies[i] = (i * SAMPLING_RATE) / fullFftSize;
+      }
+
+      if (this.debug) {
+         console.log(`PitchDetector initialized with FFT: ${this.fftImpl.name}`);
+         console.log(`FFT Description: ${this.fftImpl.description}`);
       }
    }
 
@@ -210,65 +122,69 @@ export class PitchDetector {
       return this.analyzeBuffer();
    }
 
+   // Check if arrays are detached and reallocate if needed
+   private ensureArraysValid(): void {
+      try {
+         // Test if arrays are still valid by trying to access length
+         this.fftReal.length;
+         this.fftImag.length;
+      } catch (error) {
+         // Arrays are detached, reallocate them
+         console.log("⚠️ FFT arrays detached, reallocating...");
+         this.fftReal = this.fftImpl.allocFloats(FFT_SIZE);
+         this.fftImag = this.fftImpl.allocFloats(FFT_SIZE);
+      }
+   }
+
    // Exact pitch detection algorithm from reference
    private analyzeBuffer(): PitchResult | null {
+      // Ensure arrays are valid (reallocate if memory grew)
+      this.ensureArraysValid();
+      
+      // Clear reusable arrays (zero them out)
+      this.windowedBuffer.fill(0);
+      this.fftReal.fill(0);
+      this.fftImag.fill(0);
+      this.magnitudeData.fill(0);
+
       // Apply Hanning window to buffer
-      const windowedBuffer = new Float32Array(BUFFER_SIZE);
       for (let i = 0; i < BUFFER_SIZE; i++) {
-         windowedBuffer[i] = this.buffer[i] * this.hanningWindow[i];
+         this.windowedBuffer[i] = this.buffer[i] * this.hanningWindow[i];
       }
 
-      // Zero pad exactly like reference: np.pad(buffer * hanning, (0, len(buffer) * ZERO_PADDING), "constant")
-      // Reference size: 51,200 + (51,200 * 3) = 204,800 samples
-      const paddedSize = BUFFER_SIZE + BUFFER_SIZE * ZERO_PADDING; // 204,800
-
-      const real = new Array(paddedSize);
-      const imag = new Array(paddedSize);
-
-      // Copy windowed buffer
+      // Copy windowed buffer to FFT arrays (zero padding is already done by fill(0))
       for (let i = 0; i < BUFFER_SIZE; i++) {
-         real[i] = windowedBuffer[i];
-         imag[i] = 0;
-      }
-      // Zero padding (add zeros at the end)
-      for (let i = BUFFER_SIZE; i < paddedSize; i++) {
-         real[i] = 0;
-         imag[i] = 0;
+         this.fftReal[i] = this.windowedBuffer[i];
+         // fftImag[i] is already 0 from fill(0)
       }
 
-      // Compute FFT using Bluestein algorithm (works with any size)
-      bluesteinFFT(real, imag);
+      // Compute FFT using configured implementation
+      if (this.debug) {
+         console.time(`FFT (${this.fftImpl.name})`);
+      }
+      this.fftImpl.fft(this.fftReal, this.fftImag);
+      if (this.debug) {
+         console.timeEnd(`FFT (${this.fftImpl.name})`);
+      }
 
       // Get magnitude spectrum (first half only - positive frequencies)
-      const magnitudeData = new Float32Array(paddedSize / 2); // 102,400 samples
-      for (let i = 0; i < paddedSize / 2; i++) {
-         magnitudeData[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
+      for (let i = 0; i < this.magnitudeData.length; i++) {
+         this.magnitudeData[i] = Math.sqrt(this.fftReal[i] * this.fftReal[i] + this.fftImag[i] * this.fftImag[i]);
       }
 
-      // Apply HPS exactly like reference
-      const hpsResult = this.harmonicProductSpectrum(magnitudeData);
+      // Apply HPS exactly like reference (modifies magnitudeData in place)
+      this.harmonicProductSpectrum(this.magnitudeData);
 
-      // Generate frequency array exactly like reference
-      // frequencies = np.fft.fftfreq(int((len(magnitude_data) * 2) / 1), 1. / self.SAMPLING_RATE)
-      // This means: fftfreq for the full FFT size (magnitudeData.length * 2 = 204,800)
-      const fullFftSize = magnitudeData.length * 2; // 204,800 (what Python uses)
-      const frequencies = new Float32Array(magnitudeData.length);
-
-      // Generate frequencies: [0, 1, 2, ..., n/2-1] * (sample_rate / n)
-      for (let i = 0; i < magnitudeData.length; i++) {
-         frequencies[i] = (i * SAMPLING_RATE) / fullFftSize;
-      }
-
-      // Apply 60Hz high-pass filter exactly like reference
+      // Apply 60Hz high-pass filter exactly like reference (frequencies are pre-computed)
       // for i, freq in enumerate(frequencies):
       //     if freq > 60:
       //         magnitude_data[:i - 1] = 0
       //         break
-      for (let i = 0; i < frequencies.length; i++) {
-         if (frequencies[i] > 60) {
+      for (let i = 0; i < this.frequencies.length; i++) {
+         if (this.frequencies[i] > 60) {
             // Zero out all frequencies below 60Hz
             for (let j = 0; j < i - 1; j++) {
-               hpsResult[j] = 0;
+               this.magnitudeData[j] = 0;
             }
             break;
          }
@@ -278,16 +194,32 @@ export class PitchDetector {
       // peak_frequency = frequencies[np.argmax(magnitude_data)]
       let maxIndex = 0;
       let maxValue = 0;
-      for (let i = 0; i < hpsResult.length; i++) {
-         if (hpsResult[i] > maxValue) {
-            maxValue = hpsResult[i];
+      for (let i = 0; i < this.magnitudeData.length; i++) {
+         if (this.magnitudeData[i] > maxValue) {
+            maxValue = this.magnitudeData[i];
             maxIndex = i;
          }
       }
 
+      if (this.debug) {
+         // Show top 5 peaks for debugging
+         const peaks = [];
+         for (let i = 0; i < this.magnitudeData.length; i++) {
+            if (this.magnitudeData[i] > maxValue * 0.1) {
+               // Only significant peaks
+               peaks.push({ freq: this.frequencies[i], mag: this.magnitudeData[i], index: i });
+            }
+         }
+         peaks.sort((a, b) => b.mag - a.mag);
+         console.log(
+            "Top 5 peaks after HPS:",
+            peaks.slice(0, 5).map((p) => `${p.freq.toFixed(1)}Hz (${p.mag.toFixed(0)})`),
+         );
+      }
+
       if (maxValue < 1) return null; // No significant peak found
 
-      const frequency = Math.round(frequencies[maxIndex] * 100) / 100; // Round to 2 decimal places like reference
+      const frequency = Math.round(this.frequencies[maxIndex] * 100) / 100; // Round to 2 decimal places like reference
 
       // Only accept frequencies in reasonable range
       if (frequency < 60 || frequency > 500) return null;
@@ -296,12 +228,12 @@ export class PitchDetector {
 
       // Create debug data
       const peaks = [];
-      for (let i = 0; i < Math.min(hpsResult.length, frequencies.length); i++) {
-         if (hpsResult[i] > 1 && frequencies[i] >= 60 && frequencies[i] <= 500) {
+      for (let i = 0; i < this.magnitudeData.length; i++) {
+         if (this.magnitudeData[i] > 1 && this.frequencies[i] >= 60 && this.frequencies[i] <= 500) {
             peaks.push({
-               freq: frequencies[i],
-               magnitude: hpsResult[i],
-               score: hpsResult[i],
+               freq: this.frequencies[i],
+               magnitude: this.magnitudeData[i],
+               score: this.magnitudeData[i],
             });
          }
       }
@@ -314,20 +246,17 @@ export class PitchDetector {
          cents: noteInfo.cents,
          debugData: {
             peaks: peaks.slice(0, 10),
-            frequencyData: magnitudeData,
-            hpsData: hpsResult,
+            frequencyData: this.magnitudeData,
+            hpsData: this.magnitudeData,
             sampleRate: SAMPLING_RATE,
          },
       };
    }
 
-   // Exact HPS implementation from reference
-   private harmonicProductSpectrum(magnitudeData: Float32Array): Float32Array {
+   // Exact HPS implementation from reference (modifies magnitudeData in place)
+   private harmonicProductSpectrum(magnitudeData: Float32Array): void {
       // magnitude_data_orig = copy.deepcopy(magnitude_data)
       const magnitudeOrig = new Float32Array(magnitudeData);
-
-      // Start with a copy of the original data
-      const result = new Float32Array(magnitudeData);
 
       // for i in range(2, self.NUM_HPS+1, 1):
       for (let i = 2; i <= NUM_HPS; i++) {
@@ -339,18 +268,10 @@ export class PitchDetector {
          for (let j = 0; j < hpsLen; j++) {
             const sourceIndex = j * i; // Every i-th element: 0, i, 2*i, 3*i, ...
             if (sourceIndex < magnitudeOrig.length) {
-               result[j] *= magnitudeOrig[sourceIndex];
+               magnitudeData[j] *= magnitudeOrig[sourceIndex];
             }
          }
       }
-
-      return result;
-   }
-
-   // Legacy method for backwards compatibility
-   detectPitch(_frequencyData: Uint8Array): PitchResult | null {
-      // This should not be used in the new implementation
-      throw new Error("Use processAudioChunk() instead of detectPitch() with new implementation");
    }
 
    private frequencyToNote(frequency: number): { note: string; cents: number } {

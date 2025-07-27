@@ -2,3 +2,7 @@ node_modules/
 dist/
 .DS_Store
 *.log
+src/test/data/detection_log.txt
+src/test/data/e_detection_log.txt
+src/test/data/a_detection_log.txt
+src/test/data/g_detection_log.txt

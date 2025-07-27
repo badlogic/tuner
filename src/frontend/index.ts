@@ -1,3 +1,4 @@
+import { FFT_IMPLEMENTATIONS } from "../fft.js";
 import { CHUNK_SIZE, PitchDetector, type PitchResult, SAMPLING_RATE } from "../pitch-detector.js";
 
 // Live reload for development
@@ -12,7 +13,7 @@ class GuitarTuner {
    private microphone: MediaStreamAudioSourceNode | null = null;
    private isActive = false;
 
-   private pitchDetector: PitchDetector;
+   private pitchDetector?: PitchDetector;
 
    private noteDisplay = document.getElementById("note-display") as HTMLDivElement;
    private frequencyDisplay = document.getElementById("frequency-display") as HTMLDivElement;
@@ -26,9 +27,21 @@ class GuitarTuner {
    private debugVisible = false;
 
    constructor() {
-      this.pitchDetector = new PitchDetector();
+      // Initialize WASM FFT
+      this.initializePitchDetector();
       this.startBtn.addEventListener("click", () => this.toggleTuner());
       this.debugBtn.addEventListener("click", () => this.toggleDebug());
+   }
+
+   async initializePitchDetector() {
+      // Initialize WASM FFT first
+      await FFT_IMPLEMENTATIONS.wasmBluestein.init?.();
+
+      // Create pitch detector with WASM FFT
+      this.pitchDetector = new PitchDetector({
+         fftImplementation: FFT_IMPLEMENTATIONS.wasmBluestein,
+         debug: true,
+      });
    }
 
    toggleDebug() {
@@ -105,17 +118,22 @@ class GuitarTuner {
             // Convert to Float32Array and process exactly like reference
             const audioChunk = new Float32Array(inputData);
 
-            try {
-               const result = this.pitchDetector.processAudioChunk(audioChunk);
+            if (this.pitchDetector) {
+               try {
+                  const result = this.pitchDetector.processAudioChunk(audioChunk);
 
-               if (result) {
-                  this.updateDisplay(result.note, result.frequency, result.cents);
-                  if (this.debugVisible) {
-                     this.drawSpectrum(result);
+                  if (result) {
+                     console.log(
+                        `Frontend detected: ${result.frequency.toFixed(1)}Hz → ${result.note}, ${result.cents} cents`,
+                     );
+                     this.updateDisplay(result.note, result.frequency, result.cents);
+                     if (this.debugVisible) {
+                        this.drawSpectrum(result);
+                     }
                   }
+               } catch (error) {
+                  console.error("Error processing audio chunk:", error);
                }
-            } catch (error) {
-               console.error("Error processing audio chunk:", error);
             }
          };
 

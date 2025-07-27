@@ -7,18 +7,21 @@
     "build": "node infra/build.js",
     "dev": "./run.sh dev",
     "check": "biome check --write . && tsc --noEmit",
-    "test": "npx tsx src/test/test-frequency-to-note.ts",
+    "test": "npx tsx --test --test-concurrency=1 src/test/*.test.ts",
     "prepare": "husky"
   },
   "devDependencies": {
+    "@types/node": "^20.11.2",
+    "@types/wav": "^1.0.2",
     "@biomejs/biome": "^2.1.2",
     "@tailwindcss/cli": "^4.1.11",
     "husky": "^9.1.1",
     "tailwindcss": "^4.1.11",
     "tsup": "^8.5.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "tsx": "^4.20.3"
   },
   "dependencies": {
-    "tsx": "^4.20.3"
+    "wav": "1.0.2"
   }
 }

@@ -97,6 +97,42 @@ PORT=8081 ./run.sh dev    # Start on custom port
 ./run.sh logs             # View container logs locally
 ```
 
+## Building WASM FFT
+
+The guitar tuner includes an optional WebAssembly-accelerated FFT implementation for improved performance. To build the WASM module:
+
+### Prerequisites
+
+Install required tools with Homebrew:
+
+```bash
+# Install LLVM (clang compiler) and LLD (WASM linker)
+brew install llvm lld
+
+# Optional: Install WABT (WebAssembly Binary Toolkit) for debugging
+brew install wabt
+```
+
+### Building
+
+```bash
+# Build the WASM FFT module
+./build-wasm.sh
+```
+
+This compiles `src/wasm/fft.c` to `src/wasm/fft.wasm` using:
+- **clang** (from LLVM) - C compiler with WASM target
+- **wasm-ld** (from LLD) - WebAssembly linker
+
+The generated WASM file is committed to git so end users don't need the build tools.
+
+### Implementation Notes
+
+- The TypeScript code automatically falls back to pure JS if WASM loading fails
+- Current WASM implementation is a partial Bluestein FFT (work in progress)
+- Browser environment loads WASM via `fetch('/dist/fft.wasm')`
+- Node.js environment loads WASM via `fs.readFileSync()`
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
