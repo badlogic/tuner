@@ -4,6 +4,10 @@ Browser-based guitar tuner using Web Audio API.
 
 https://tuner.mariozechner.at
 
+## Credits
+
+The pitch detection algorithm is based on [GuitarTuner](https://github.com/TomSchimansky/GuitarTuner/tree/master) by [TomSchimansky](https://github.com/TomSchimansky), implemented with Harmonic Product Spectrum (HPS) analysis and optimized for real-time performance with WebAssembly acceleration.
+
 ## Usage
 
 1. Click START
@@ -120,19 +124,12 @@ brew install wabt
 ./build-wasm.sh
 ```
 
-This compiles `src/wasm/fft.c` to `src/wasm/fft.wasm` using:
+This compiles `src/wasm/fft.c` to `src/frontend/fft.wasm` using:
 - **clang** (from LLVM) - C compiler with WASM target
 - **wasm-ld** (from LLD) - WebAssembly linker
 
 The generated WASM file is committed to git so end users don't need the build tools.
 
-### Implementation Notes
-
-- The TypeScript code automatically falls back to pure JS if WASM loading fails
-- Current WASM implementation is a partial Bluestein FFT (work in progress)
-- Browser environment loads WASM via `fetch('/dist/fft.wasm')`
-- Node.js environment loads WASM via `fs.readFileSync()`
-
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+GPL 2 License - see [LICENSE](LICENSE) file for details.

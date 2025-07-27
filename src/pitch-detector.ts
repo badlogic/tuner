@@ -55,6 +55,8 @@ export function generateTestSignal(
 export interface PitchDetectorOptions {
    fftImplementation: FFTImplementation;
    debug?: boolean;
+   smoothing?: boolean; // Enable frequency smoothing (default: true)
+   smoothingFactor?: number; // Smoothing strength 0-1 (default: 0.3)
 }
 
 export class PitchDetector {
@@ -62,6 +64,11 @@ export class PitchDetector {
    private hanningWindow: Float32Array;
    private fftImpl: FFTImplementation;
    private debug: boolean;
+
+   // Frequency smoothing
+   private smoothing: boolean;
+   private smoothingFactor: number;
+   private smoothedFrequency = 0;
 
    // Reusable arrays to avoid allocations
    private windowedBuffer: Float32Array;
@@ -76,6 +83,8 @@ export class PitchDetector {
       this.hanningWindow = new Float32Array(BUFFER_SIZE);
       this.fftImpl = options.fftImplementation;
       this.debug = options.debug || false;
+      this.smoothing = options.smoothing !== false; // Default to true
+      this.smoothingFactor = options.smoothingFactor || 0.3;
 
       // Pre-allocate reusable arrays
       this.windowedBuffer = new Float32Array(BUFFER_SIZE); // 51,200
@@ -209,10 +218,23 @@ export class PitchDetector {
 
       if (maxValue < 1) return null; // No significant peak found
 
-      const frequency = Math.round(this.frequencies[maxIndex] * 100) / 100; // Round to 2 decimal places like reference
+      const rawFrequency = Math.round(this.frequencies[maxIndex] * 100) / 100; // Round to 2 decimal places like reference
 
       // Only accept frequencies in reasonable range
-      if (frequency < 60 || frequency > 500) return null;
+      if (rawFrequency < 60 || rawFrequency > 500) return null;
+
+      // Apply frequency smoothing if enabled
+      let frequency = rawFrequency;
+      if (this.smoothing) {
+         if (this.smoothedFrequency === 0) {
+            // Initialize smoothed frequency on first detection
+            this.smoothedFrequency = rawFrequency;
+         } else {
+            // Apply exponential smoothing
+            this.smoothedFrequency += this.smoothingFactor * (rawFrequency - this.smoothedFrequency);
+         }
+         frequency = Math.round(this.smoothedFrequency * 100) / 100;
+      }
 
       const noteInfo = this.frequencyToNote(frequency);
 
@@ -303,7 +325,7 @@ export class PitchDetector {
       const cents = Math.round(1200 * Math.log2(frequency / expectedFreq));
 
       return {
-         note: `${noteName}${octave}`,
+         note: noteName,
          cents,
       };
    }
