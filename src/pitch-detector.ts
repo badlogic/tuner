@@ -69,6 +69,7 @@ export class PitchDetector {
    private smoothing: boolean;
    private smoothingFactor: number;
    private smoothedFrequency = 0;
+   private lastDetectedNote = "";
 
    // Reusable arrays to avoid allocations
    private windowedBuffer: Float32Array;
@@ -223,14 +224,18 @@ export class PitchDetector {
       // Only accept frequencies in reasonable range
       if (rawFrequency < 60 || rawFrequency > 500) return null;
 
-      // Apply frequency smoothing if enabled
+      // Get the raw note to check if it changed
+      const rawNoteInfo = this.frequencyToNote(rawFrequency);
+
+      // Apply note-aware frequency smoothing if enabled
       let frequency = rawFrequency;
       if (this.smoothing) {
-         if (this.smoothedFrequency === 0) {
-            // Initialize smoothed frequency on first detection
+         if (this.lastDetectedNote === "" || this.lastDetectedNote !== rawNoteInfo.note) {
+            // New note detected - reset smoothing immediately
             this.smoothedFrequency = rawFrequency;
+            this.lastDetectedNote = rawNoteInfo.note;
          } else {
-            // Apply exponential smoothing
+            // Same note - apply exponential smoothing for stability
             this.smoothedFrequency += this.smoothingFactor * (rawFrequency - this.smoothedFrequency);
          }
          frequency = Math.round(this.smoothedFrequency * 100) / 100;
@@ -313,6 +318,7 @@ export class PitchDetector {
       const adjustedIndex = noteIndex < 0 ? noteIndex + 12 : noteIndex;
 
       // Calculate octave
+      // biome-ignore lint/correctness/noUnusedVariables: Maybe neeeded for future adjustments
       const octave = Math.floor((closestSemitonesFromA4 + 9) / 12) + 4;
 
       const notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];

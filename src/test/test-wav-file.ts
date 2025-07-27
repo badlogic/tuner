@@ -234,9 +234,14 @@ async function main() {
 
    if (fileName) {
       // Test specific file
-      const actualFileName = fileName.includes("/") ? fileName.split("/").pop()! : fileName;
-      const expectedNote = `${actualFileName.replace(".wav", "").toUpperCase()}2`;
-      await testWavFile(actualFileName, expectedNote, fftId);
+      const actualFileName = fileName.includes("/") ? fileName.split("/").pop() : fileName;
+      if (actualFileName) {
+         const expectedNote = `${actualFileName.replace(".wav", "").toUpperCase()}2`;
+         await testWavFile(actualFileName, expectedNote, fftId);
+      } else {
+         console.error("Please provide a valid WAV file name (e.g. test.wav)");
+         process.exit(1);
+      }
    } else {
       // Test all WAV files
       const fs = await import("node:fs");

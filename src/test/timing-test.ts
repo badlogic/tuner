@@ -1,7 +1,7 @@
-import { FFT_IMPLEMENTATIONS } from "../fft.js";
+import { FFT_IMPLEMENTATIONS, type FFTImplementation } from "../fft.js";
 import { generateTestSignal, PitchDetector } from "../pitch-detector.js";
 
-async function testImplementation(name: string, impl: any) {
+async function testImplementation(name: string, impl: FFTImplementation) {
    console.log(`\n=== Testing ${name} ===`);
 
    if (impl.init) {

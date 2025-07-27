@@ -118,7 +118,7 @@ test("performance comparison", async () => {
             total,
             success: passed === total,
          });
-         // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+         // biome-ignore lint/suspicious/noExplicitAny: we know it's an Error
       } catch (error: any) {
          console.log(`  ${impl.name}: Failed (${error.message})`);
       }

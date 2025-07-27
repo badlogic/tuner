@@ -14,7 +14,8 @@ export function cleanAndCopyStaticFiles(src, dist) {
              !source.endsWith('.js') &&
              !source.endsWith('.jsx') &&
              !source.endsWith('.css') ||
-             source === src;
+             source === src ||
+             source.endsWith('pitch-worklet.js'); // Include worklet file
     }
   });
 }
@@ -26,12 +27,13 @@ export function watchStaticFiles(src, dist, callback) {
   const watcher = fsWatch(src, { recursive: true }, (eventType, filename) => {
     if (!filename) return;
     
-    // Check if it's a static file (not ts/tsx/js/jsx/css)
-    if (!filename.endsWith('.ts') && 
+    // Check if it's a static file (not ts/tsx/js/jsx/css) or our worklet
+    if ((!filename.endsWith('.ts') && 
         !filename.endsWith('.tsx') && 
         !filename.endsWith('.js') && 
         !filename.endsWith('.jsx') && 
-        !filename.endsWith('.css')) {
+        !filename.endsWith('.css')) ||
+        filename.endsWith('pitch-worklet.js')) {
       
       const srcPath = join(src, filename);
       const destPath = join(dist, filename);

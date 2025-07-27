@@ -1,5 +1,5 @@
 import { FFT_IMPLEMENTATIONS } from "../fft.js";
-import { CHUNK_SIZE, PitchDetector, type PitchResult, SAMPLING_RATE } from "../pitch-detector.js";
+import { PitchDetector, type PitchResult, SAMPLING_RATE } from "../pitch-detector.js";
 
 // Live reload for development
 if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
@@ -9,7 +9,7 @@ if (window.location.hostname === "localhost" || window.location.hostname === "12
 
 class GuitarTuner {
    private audioContext: AudioContext | null = null;
-   private processor: ScriptProcessorNode | null = null;
+   private workletNode: AudioWorkletNode | null = null;
    private microphone: MediaStreamAudioSourceNode | null = null;
    private isActive = false;
 
@@ -106,21 +106,21 @@ class GuitarTuner {
 
          console.log(`AudioContext sample rate: ${this.audioContext.sampleRate}Hz`);
 
-         // Use ScriptProcessorNode for exact 1024-sample chunks
-         this.processor = this.audioContext.createScriptProcessor(CHUNK_SIZE, 1, 1);
+         // Load AudioWorklet processor for real-time audio processing
+         await this.audioContext.audioWorklet.addModule("./pitch-worklet.js");
 
-         this.processor.onaudioprocess = (event: AudioProcessingEvent) => {
+         // Create worklet node
+         this.workletNode = new AudioWorkletNode(this.audioContext, "pitch-processor");
+
+         // Handle messages from audio worklet
+         this.workletNode.port.onmessage = (event) => {
             if (!this.isActive) return;
 
-            const inputBuffer = event.inputBuffer;
-            const inputData = inputBuffer.getChannelData(0); // Mono channel
+            const { type, data } = event.data;
 
-            // Convert to Float32Array and process exactly like reference
-            const audioChunk = new Float32Array(inputData);
-
-            if (this.pitchDetector) {
+            if (type === "audioChunk" && this.pitchDetector) {
                try {
-                  const result = this.pitchDetector.processAudioChunk(audioChunk);
+                  const result = this.pitchDetector.processAudioChunk(data);
 
                   if (result) {
                      this.updateDisplay(result.note, result.frequency, result.cents);
@@ -135,10 +135,8 @@ class GuitarTuner {
          };
 
          this.microphone = this.audioContext.createMediaStreamSource(stream);
-         if (this.processor) {
-            this.microphone.connect(this.processor);
-         }
-         this.processor?.connect(this.audioContext.destination); // Prevent garbage collection
+         this.microphone.connect(this.workletNode);
+         this.workletNode.connect(this.audioContext.destination); // Prevent garbage collection
 
          this.isActive = true;
          this.startBtn.textContent = "STOP";
@@ -151,9 +149,9 @@ class GuitarTuner {
 
    stop() {
       this.isActive = false;
-      if (this.processor) {
-         this.processor.disconnect();
-         this.processor = null;
+      if (this.workletNode) {
+         this.workletNode.disconnect();
+         this.workletNode = null;
       }
       if (this.microphone) {
          this.microphone.disconnect();
