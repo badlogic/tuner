@@ -81,6 +81,15 @@ test("bluestein FFT implementation", async () => {
    console.log(`  Bluestein: ${(avgDuration * 1000).toFixed(1)}ms avg, ${passed}/${total} passed`);
 });
 
+test("Cooley-Tukey FFT implementation", async () => {
+   const { avgDuration, passed, total } = await testFFTImplementation(FFT_IMPLEMENTATIONS.cooleyTukey);
+
+   // Should pass all tests
+   assert.strictEqual(passed, total, `Only ${passed}/${total} tests passed`);
+
+   console.log(`  Cooley-Tukey: ${(avgDuration * 1000).toFixed(1)}ms avg, ${passed}/${total} passed`);
+});
+
 test("WASM FFT implementation", async () => {
    const { avgDuration, passed, total } = await testFFTImplementation(FFT_IMPLEMENTATIONS.wasmBluestein);
 
@@ -91,13 +100,15 @@ test("WASM FFT implementation", async () => {
 });
 
 test("performance comparison", async () => {
-   const implementations = [FFT_IMPLEMENTATIONS.bluestein, FFT_IMPLEMENTATIONS.wasmBluestein];
+   const implementations = [
+      FFT_IMPLEMENTATIONS.cooleyTukey,
+      FFT_IMPLEMENTATIONS.bluestein,
+      FFT_IMPLEMENTATIONS.wasmBluestein,
+   ];
 
    const results = [];
 
    for (const impl of implementations) {
-      if (impl.needsPowerOf2) continue;
-
       try {
          const { avgDuration, passed, total } = await testFFTImplementation(impl);
          results.push({

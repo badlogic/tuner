@@ -9,8 +9,9 @@ export const NUM_HPS = 3;
 
 // Calculated values
 export const BUFFER_SIZE = CHUNK_SIZE * BUFFER_TIMES; // 51,200 samples
-export const FFT_SIZE = BUFFER_SIZE * (1 + ZERO_PADDING); // 204,800 samples
-export const FREQUENCY_RESOLUTION = SAMPLING_RATE / FFT_SIZE; // 0.234375 Hz per bin
+const FFT_SIZE_EXACT = BUFFER_SIZE * (1 + ZERO_PADDING); // 204,800 samples
+export const FFT_SIZE = 2 ** Math.ceil(Math.log2(FFT_SIZE_EXACT)); // 262,144 samples (next power of 2)
+export const FREQUENCY_RESOLUTION = SAMPLING_RATE / FFT_SIZE; // Updated frequency resolution
 
 export interface PitchResult {
    frequency: number;

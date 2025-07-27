@@ -31,6 +31,8 @@ async function testImplementation(name: string, impl: any) {
 }
 
 async function testTiming() {
+   await testImplementation("Cooley-Tukey (JS)", FFT_IMPLEMENTATIONS.cooleyTukey);
+   await testImplementation("WASM Cooley-Tukey", FFT_IMPLEMENTATIONS.wasmCooleyTukey);
    await testImplementation("Bluestein (JS)", FFT_IMPLEMENTATIONS.bluestein);
    await testImplementation("WASM Bluestein", FFT_IMPLEMENTATIONS.wasmBluestein);
 }

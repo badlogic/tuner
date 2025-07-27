@@ -147,10 +147,3 @@ void bluestein_fft(float* real, float* imag, int n) {
     free(c_imag);
 }
 
-// Export functions for WASM
-void wasm_fft(int real_offset, int imag_offset, int size) {
-    // Convert offsets to pointers
-    float* real = (float*)((char*)0 + real_offset);
-    float* imag = (float*)((char*)0 + imag_offset);
-    bluestein_fft(real, imag, size);
-}

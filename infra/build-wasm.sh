@@ -23,7 +23,8 @@ echo "Building with clang + wasm-ld..."
 # Link with wasm-ld  
 wasm-ld \
     --no-entry \
-    --export=wasm_fft \
+    --export=bluestein_fft \
+    --export=cooley_tukey_fft \
     --import-memory \
     --allow-undefined \
     src/wasm/fft.o \

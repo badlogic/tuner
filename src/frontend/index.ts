@@ -35,12 +35,12 @@ class GuitarTuner {
 
    async initializePitchDetector() {
       // Initialize WASM FFT first
-      await FFT_IMPLEMENTATIONS.wasmBluestein.init?.();
+      await FFT_IMPLEMENTATIONS.wasmCooleyTukey.init?.();
 
       // Create pitch detector with WASM FFT
       this.pitchDetector = new PitchDetector({
-         fftImplementation: FFT_IMPLEMENTATIONS.wasmBluestein,
-         debug: true,
+         fftImplementation: FFT_IMPLEMENTATIONS.wasmCooleyTukey,
+         debug: false,
       });
    }
 
@@ -123,9 +123,6 @@ class GuitarTuner {
                   const result = this.pitchDetector.processAudioChunk(audioChunk);
 
                   if (result) {
-                     console.log(
-                        `Frontend detected: ${result.frequency.toFixed(1)}Hz → ${result.note}, ${result.cents} cents`,
-                     );
                      this.updateDisplay(result.note, result.frequency, result.cents);
                      if (this.debugVisible) {
                         this.drawSpectrum(result);
@@ -313,14 +310,9 @@ class GuitarTuner {
       this.noteDisplay.textContent = note;
       this.frequencyDisplay.textContent = `${frequency.toFixed(1)} Hz`;
 
-      // Debug the cents value
-      console.log(`Note: ${note}, Frequency: ${frequency.toFixed(1)}Hz, Cents: ${cents}`);
-
       const maxCents = 50;
       const clampedCents = Math.max(-maxCents, Math.min(maxCents, cents));
       const angle = (clampedCents / maxCents) * 80;
-
-      console.log(`Clamped cents: ${clampedCents}, Angle: ${angle}`);
 
       this.needle.setAttribute("transform", `rotate(${angle}, 100, 100)`);
 

@@ -52,15 +52,25 @@ function readWavFile(filePath: string): Promise<Float32Array> {
    });
 }
 
-async function testWavFile(fileName: string, expectedNote: string) {
-   console.log(`Testing ${fileName} (expected ${expectedNote})`);
+async function testWavFile(fileName: string, expectedNote: string, fftId: string = "bluestein") {
+   const fftImpl = FFT_IMPLEMENTATIONS[fftId];
+   if (!fftImpl) {
+      throw new Error(`Unknown FFT implementation: ${fftId}`);
+   }
+
+   console.log(`Testing ${fileName} (expected ${expectedNote}) with ${fftImpl.name}`);
+
+   // Initialize FFT if needed
+   if (fftImpl.init) {
+      await fftImpl.init();
+   }
 
    // Read the WAV file
    const samples = await readWavFile(`src/test/data/${fileName}`);
 
-   // Create detector with Bluestein (accurate) implementation
+   // Create detector with specified implementation
    const detector = new PitchDetector({
-      fftImplementation: FFT_IMPLEMENTATIONS.bluestein,
+      fftImplementation: fftImpl,
       debug: false,
    });
 
@@ -200,15 +210,33 @@ async function testWavFile(fileName: string, expectedNote: string) {
 const args = process.argv.slice(2);
 
 async function main() {
-   if (args.length > 0) {
+   // Parse arguments: <fft> [filename]
+   const fftId = args[0];
+   const fileName = args[1];
+
+   if (!fftId) {
+      console.log("Usage: npx tsx src/test/test-wav-file.ts <fft> [filename]");
+      console.log("\nAvailable FFT implementations:");
+      Object.keys(FFT_IMPLEMENTATIONS).forEach((key) => {
+         console.log(`  ${key}: ${FFT_IMPLEMENTATIONS[key].description}`);
+      });
+      process.exit(1);
+   }
+
+   if (!FFT_IMPLEMENTATIONS[fftId]) {
+      console.error(`Unknown FFT implementation: ${fftId}`);
+      console.log("\nAvailable FFT implementations:");
+      Object.keys(FFT_IMPLEMENTATIONS).forEach((key) => {
+         console.log(`  ${key}: ${FFT_IMPLEMENTATIONS[key].description}`);
+      });
+      process.exit(1);
+   }
+
+   if (fileName) {
       // Test specific file
-      const filePath = args[0];
-      const fileName = filePath.includes("/") ? filePath.split("/").pop() : filePath;
-      if (!fileName) {
-         throw new Error("No file specified");
-      }
-      const expectedNote = `${fileName.replace(".wav", "").toUpperCase()}2`; // Simple guess
-      await testWavFile(fileName, expectedNote);
+      const actualFileName = fileName.includes("/") ? fileName.split("/").pop()! : fileName;
+      const expectedNote = `${actualFileName.replace(".wav", "").toUpperCase()}2`;
+      await testWavFile(actualFileName, expectedNote, fftId);
    } else {
       // Test all WAV files
       const fs = await import("node:fs");
@@ -218,11 +246,12 @@ async function main() {
          .sort();
 
       console.log(`Found ${files.length} WAV files: ${files.join(", ")}`);
+      console.log(`Using FFT: ${fftId}`);
 
       for (const file of files) {
          const expectedNote = `${file.replace(".wav", "").toUpperCase()}2`;
          console.log(`\n${"=".repeat(50)}`);
-         await testWavFile(file, expectedNote);
+         await testWavFile(file, expectedNote, fftId);
          console.log("=".repeat(50));
       }
    }

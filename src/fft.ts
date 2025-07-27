@@ -162,8 +162,8 @@ async function loadWasmFFT(): Promise<void> {
          wasmBytes = await wasmResponse.arrayBuffer();
       }
 
-      // Create memory with 16MB initial size (256 pages * 64KB = 16MB)
-      const memory = new WebAssembly.Memory({ initial: 256 });
+      // Create memory with 32MB initial size (512 pages * 64KB = 32MB)
+      const memory = new WebAssembly.Memory({ initial: 512 });
 
       // Provide Math and allocator imports for WASM
       wasmAllocator = new WasmAllocator();
@@ -188,19 +188,34 @@ async function loadWasmFFT(): Promise<void> {
    }
 }
 
-function wasmFFT(real: Float32Array, imag: Float32Array): void {
+function wasmBluesteinFFT(real: Float32Array, imag: Float32Array): void {
    if (!wasmModule || !wasmMemory || !wasmAllocator) {
       throw new Error("WASM FFT not loaded - use bluestein implementation instead");
    }
 
-   // Only reset scratch space, leave persistent allocations (real/imag) intact
-   // No need to reset - allocator handles this internally
    const size = real.length;
-
-   // Call WASM function with pointers (byte offsets)
    const realPtr = real.byteOffset;
    const imagPtr = imag.byteOffset;
-   (wasmModule.exports.wasm_fft as (realPtr: number, imagPtr: number, size: number) => void)(realPtr, imagPtr, size);
+   (wasmModule.exports.bluestein_fft as (realPtr: number, imagPtr: number, size: number) => void)(
+      realPtr,
+      imagPtr,
+      size,
+   );
+}
+
+function wasmCooleyTukeyFFT(real: Float32Array, imag: Float32Array): void {
+   if (!wasmModule || !wasmMemory || !wasmAllocator) {
+      throw new Error("WASM FFT not loaded - use cooley-tukey implementation instead");
+   }
+
+   const size = real.length;
+   const realPtr = real.byteOffset;
+   const imagPtr = imag.byteOffset;
+   (wasmModule.exports.cooley_tukey_fft as (realPtr: number, imagPtr: number, size: number) => void)(
+      realPtr,
+      imagPtr,
+      size,
+   );
 }
 
 // Helper function to get next power of 2
@@ -215,12 +230,12 @@ export function isPowerOf2(n: number): boolean {
 
 // Available FFT implementations for CLI/Node.js environment
 export const FFT_IMPLEMENTATIONS: Record<string, FFTImplementation> = {
-   // WASM accelerated version - no fallback
+   // WASM accelerated versions
    wasmBluestein: {
       name: "WASM Bluestein",
       description: "Fast WASM Bluestein FFT. Requires WASM to be loaded.",
       needsPowerOf2: false,
-      fft: wasmFFT,
+      fft: wasmBluesteinFFT,
       allocFloats: (count: number) => {
          if (!wasmAllocator) {
             throw new Error("WASM allocator not initialized");
@@ -230,7 +245,21 @@ export const FFT_IMPLEMENTATIONS: Record<string, FFTImplementation> = {
       init: loadWasmFFT,
    },
 
-   // Most accurate - matches NumPy exactly but slowest
+   wasmCooleyTukey: {
+      name: "WASM Cooley-Tukey",
+      description: "Fastest WASM FFT. Requires power-of-2 input size.",
+      needsPowerOf2: true,
+      fft: wasmCooleyTukeyFFT,
+      allocFloats: (count: number) => {
+         if (!wasmAllocator) {
+            throw new Error("WASM allocator not initialized");
+         }
+         return wasmAllocator.allocFloat32Array(count);
+      },
+      init: loadWasmFFT,
+   },
+
+   // JavaScript implementations
    bluestein: {
       name: "Bluestein (Exact)",
       description: "Most accurate, matches NumPy exactly. Very slow (~8s).",
@@ -239,10 +268,9 @@ export const FFT_IMPLEMENTATIONS: Record<string, FFTImplementation> = {
       fft: bluesteinFFT,
    },
 
-   // Fastest but requires power of 2 input
    cooleyTukey: {
       name: "Cooley-Tukey",
-      description: "Fastest, but requires power-of-2 input size.",
+      description: "Fastest JS FFT, but requires power-of-2 input size.",
       needsPowerOf2: true,
       allocFloats: (count: number) => new Float32Array(count),
       fft: cooleyTukeyFFT,
