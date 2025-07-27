@@ -74,16 +74,22 @@ tuner/
 │   │   ├── index.html            # Main HTML with SVG tuner display
 │   │   ├── index.ts              # Main TypeScript application
 │   │   ├── pitch-worklet.js      # AudioWorklet for real-time processing
-│   │   └── styles.css            # Tailwind CSS styles
+│   │   ├── styles.css            # Tailwind CSS styles
+│   │   └── img/                  # Images and assets
+│   │       ├── favicon.svg       # SVG favicon (needle icon)
+│   │       └── og-image.png      # Social media preview image
 │   ├── pitch-detector.ts         # YIN pitch detection algorithm
 │   └── test/                     # Test suite
 │       ├── frequency-to-note.test.ts  # YIN accuracy tests
 │       └── test-wav-file.ts      # WAV file analysis tool
 ├── dist/                         # Build output (git ignored)
-│   ├── index.html                # Built HTML
+│   ├── index.html                # Built HTML with meta tags
 │   ├── index.js                  # Bundled JavaScript
 │   ├── index.js.map              # Source map
-│   └── styles.css                # Compiled CSS
+│   ├── styles.css                # Compiled CSS
+│   └── img/                      # Built images and assets
+│       ├── favicon.svg           # SVG favicon
+│       └── og-image.png          # Social media preview image
 ├── infra/                        # Infrastructure
 │   ├── build.js                  # Build script
 │   ├── static-files.js           # Static file handling
@@ -135,4 +141,4 @@ The tuner uses the **YIN algorithm** for pitch detection:
 
 ## License
 
-GPL-2 License - see [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) file for details.

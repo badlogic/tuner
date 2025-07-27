@@ -55,8 +55,6 @@ logs)
     ;;
 deploy)
     echo "Deploying $PROJECT to $DOMAIN..."
-    npm install
-    node infra/build.js
     sync_files
 
     echo "Restarting services..."
