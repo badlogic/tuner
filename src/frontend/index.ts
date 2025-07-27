@@ -15,14 +15,114 @@ class GuitarTuner {
    private dataArray: Float32Array | null = null;
 
    private pitchDetector?: PitchDetector;
+   private a4Frequency: number; // Current A4 reference frequency
+
+   // Auto-repeat state for frequency buttons
+   private autoRepeatTimeout: number | null = null;
+   private autoRepeatInterval: number | null = null;
 
    private noteDisplay = document.getElementById("note-display") as HTMLDivElement;
    private frequencyDisplay = document.getElementById("frequency-display") as HTMLDivElement;
    private needle = document.getElementById("needle") as unknown as SVGLineElement;
    private startBtn = document.getElementById("start-btn") as HTMLButtonElement;
+   private tuningControls = document.getElementById("tuning-controls") as HTMLDivElement;
+   private freqDisplay = document.getElementById("freq-display") as HTMLDivElement;
+   private freqUpBtn = document.getElementById("freq-up") as HTMLButtonElement;
+   private freqDownBtn = document.getElementById("freq-down") as HTMLButtonElement;
 
    constructor() {
+      // Load saved A4 frequency from localStorage, default to 440Hz
+      this.a4Frequency = this.loadA4Frequency();
+      this.freqDisplay.textContent = `${this.a4Frequency} Hz`;
+
       this.startBtn.addEventListener("click", () => this.toggleTuner());
+
+      // Set up press-and-hold for frequency buttons
+      this.setupPressAndHold(this.freqUpBtn, 1);
+      this.setupPressAndHold(this.freqDownBtn, -1);
+   }
+
+   private loadA4Frequency(): number {
+      try {
+         const saved = localStorage.getItem("tuner-a4-frequency");
+         if (saved) {
+            const frequency = parseInt(saved, 10);
+            // Validate the frequency is in acceptable range
+            if (frequency >= 400 && frequency <= 480) {
+               return frequency;
+            }
+         }
+      } catch (error) {
+         console.warn("Failed to load A4 frequency from localStorage:", error);
+      }
+      return 440; // Default fallback
+   }
+
+   private saveA4Frequency(): void {
+      try {
+         localStorage.setItem("tuner-a4-frequency", this.a4Frequency.toString());
+      } catch (error) {
+         console.warn("Failed to save A4 frequency to localStorage:", error);
+      }
+   }
+
+   private setupPressAndHold(button: HTMLButtonElement, direction: number): void {
+      const startAutoRepeat = () => {
+         // Clear any existing timers
+         this.clearAutoRepeat();
+
+         // Initial adjustment (immediate)
+         this.adjustFrequency(direction);
+
+         // Set up auto-repeat after 750ms delay
+         this.autoRepeatTimeout = window.setTimeout(() => {
+            // Start repeating every 100ms
+            this.autoRepeatInterval = window.setInterval(() => {
+               this.adjustFrequency(direction);
+            }, 100);
+         }, 750);
+      };
+
+      const stopAutoRepeat = () => {
+         this.clearAutoRepeat();
+      };
+
+      // Mouse events
+      button.addEventListener("mousedown", startAutoRepeat);
+      button.addEventListener("mouseup", stopAutoRepeat);
+      button.addEventListener("mouseleave", stopAutoRepeat);
+
+      // Touch events for mobile
+      button.addEventListener(
+         "touchstart",
+         (e) => {
+            if (e.cancelable) {
+               e.preventDefault(); // Only prevent if allowed
+            }
+            startAutoRepeat();
+         },
+         { passive: false },
+      );
+      button.addEventListener("touchend", stopAutoRepeat);
+      button.addEventListener("touchcancel", stopAutoRepeat);
+   }
+
+   private clearAutoRepeat(): void {
+      if (this.autoRepeatTimeout) {
+         clearTimeout(this.autoRepeatTimeout);
+         this.autoRepeatTimeout = null;
+      }
+      if (this.autoRepeatInterval) {
+         clearInterval(this.autoRepeatInterval);
+         this.autoRepeatInterval = null;
+      }
+   }
+
+   private adjustFrequency(direction: number) {
+      // Adjust by 1Hz increments, common range 400-480Hz
+      this.a4Frequency = Math.max(400, Math.min(480, this.a4Frequency + direction));
+      this.freqDisplay.textContent = `${this.a4Frequency} Hz`;
+      this.saveA4Frequency(); // Persist to localStorage
    }
 
    async initializePitchDetector(sampleRate: number) {
@@ -32,6 +132,7 @@ class GuitarTuner {
          debug: false,
          threshold: 0.1,
          fMin: 40.0, // Lower minimum for baritone guitars
+         a4Frequency: this.a4Frequency, // Use current A4 setting
       });
 
       console.log(`Pitch detector: ${this.pitchDetector.sampleRate}Hz, ${this.pitchDetector.chunkSize} samples`);
@@ -47,6 +148,11 @@ class GuitarTuner {
 
    async start() {
       try {
+         // Check if getUserMedia is available
+         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error("getUserMedia is not supported in this browser");
+         }
+
          // Use default audio setup like test.html
          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
@@ -73,11 +179,29 @@ class GuitarTuner {
          this.startBtn.textContent = "STOP";
          this.startBtn.classList.remove("bg-green-600", "hover:bg-green-700");
          this.startBtn.classList.add("bg-red-600", "hover:bg-red-700");
+         this.tuningControls.style.display = "none"; // Hide tuning controls when active
+         this.clearAutoRepeat(); // Stop any ongoing auto-repeat
 
          // Start processing audio like test.html
          this.processAudio();
       } catch (error) {
          console.error("Error accessing microphone:", error);
+
+         // Show user-friendly error message
+         let errorMessage = "Failed to access microphone";
+         if (error instanceof Error) {
+            if (error.message.includes("not supported")) {
+               errorMessage = "Microphone access not supported in this browser";
+            } else if (error.name === "NotAllowedError") {
+               errorMessage = "Microphone access denied. Please allow microphone access and try again.";
+            } else if (error.name === "NotFoundError") {
+               errorMessage = "No microphone found";
+            } else if (error.name === "NotReadableError") {
+               errorMessage = "Microphone is already in use";
+            }
+         }
+
+         alert(errorMessage);
       }
    }
 
@@ -105,8 +229,9 @@ class GuitarTuner {
       this.startBtn.textContent = "START";
       this.startBtn.classList.remove("bg-red-600", "hover:bg-red-700");
       this.startBtn.classList.add("bg-green-600", "hover:bg-green-700");
+      this.tuningControls.style.display = "block"; // Show tuning controls when stopped
       this.noteDisplay.textContent = "A";
-      this.frequencyDisplay.textContent = "440.00 Hz";
+      this.frequencyDisplay.textContent = `${this.a4Frequency}.00 Hz`;
       this.needle.setAttribute("transform", "rotate(0, 100, 100)");
    }
 

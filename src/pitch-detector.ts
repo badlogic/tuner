@@ -9,6 +9,7 @@ export interface PitchDetectorOptions {
    debug?: boolean;
    threshold?: number; // YIN threshold (default: 0.1)
    fMin?: number; // Minimum frequency (default: 40.0)
+   a4Frequency?: number; // A4 reference frequency (default: 440.0)
 }
 
 export class PitchDetector {
@@ -19,6 +20,7 @@ export class PitchDetector {
    private debug: boolean;
    private threshold: number;
    private fMin: number;
+   private a4Frequency: number;
 
    constructor(options: PitchDetectorOptions) {
       this.sampleRate = options.sampleRate;
@@ -26,10 +28,11 @@ export class PitchDetector {
       this.debug = options.debug || false;
       this.threshold = options.threshold || 0.1;
       this.fMin = options.fMin || 40.0;
+      this.a4Frequency = options.a4Frequency || 440.0;
 
       if (this.debug) {
          console.log(
-            `PitchDetectorYIN initialized: ${this.sampleRate}Hz, ${this.chunkSize} samples, threshold: ${this.threshold}`,
+            `PitchDetectorYIN initialized: ${this.sampleRate}Hz, ${this.chunkSize} samples, threshold: ${this.threshold}, A4: ${this.a4Frequency}Hz`,
          );
       }
    }
@@ -120,74 +123,35 @@ export class PitchDetector {
       return denom === 0 ? i : i + (x0 - x2) / (2 * denom);
    }
 
+   private generateNoteFrequencies(): Array<{ note: string; freq: number }> {
+      const noteFrequencies: Array<{ note: string; freq: number }> = [];
+      const noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+      // Generate frequencies for octaves 1-5 (C1 to G5)
+      // A4 is the 9th note (index 9) in octave 4
+      for (let octave = 1; octave <= 5; octave++) {
+         for (let noteIndex = 0; noteIndex < 12; noteIndex++) {
+            const noteName = noteNames[noteIndex];
+
+            // Calculate semitone offset from A4
+            // A4 is at octave 4, note index 9
+            const semitonesFromA4 = (octave - 4) * 12 + (noteIndex - 9);
+
+            // Calculate frequency using equal temperament: f = A4 * 2^(n/12)
+            const frequency = this.a4Frequency * 2 ** (semitonesFromA4 / 12);
+
+            // Only include frequencies in our detection range (32Hz - 800Hz)
+            if (frequency >= 30 && frequency <= 800) {
+               noteFrequencies.push({ note: noteName, freq: frequency });
+            }
+         }
+      }
+
+      return noteFrequencies;
+   }
+
    private getClosestNote(frequency: number): { note: string; cents: number } {
-      const noteFrequencies = [
-         // Lower octaves for baritone guitars (C1-B1)
-         { note: "C", freq: 32.7 },
-         { note: "C#", freq: 34.65 },
-         { note: "D", freq: 36.71 },
-         { note: "D#", freq: 38.89 },
-         { note: "E", freq: 41.2 },
-         { note: "F", freq: 43.65 },
-         { note: "F#", freq: 46.25 },
-         { note: "G", freq: 49.0 },
-         { note: "G#", freq: 51.91 },
-         { note: "A", freq: 55.0 },
-         { note: "A#", freq: 58.27 },
-         { note: "B", freq: 61.74 },
-
-         // C2-B2
-         { note: "C", freq: 65.41 },
-         { note: "C#", freq: 69.3 },
-         { note: "D", freq: 73.42 },
-         { note: "D#", freq: 77.78 },
-         { note: "E", freq: 82.41 },
-         { note: "F", freq: 87.31 },
-         { note: "F#", freq: 92.5 },
-         { note: "G", freq: 98.0 },
-         { note: "G#", freq: 103.83 },
-         { note: "A", freq: 110.0 },
-         { note: "A#", freq: 116.54 },
-         { note: "B", freq: 123.47 },
-
-         // C3-B3
-         { note: "C", freq: 130.81 },
-         { note: "C#", freq: 138.59 },
-         { note: "D", freq: 146.83 },
-         { note: "D#", freq: 155.56 },
-         { note: "E", freq: 164.81 },
-         { note: "F", freq: 174.61 },
-         { note: "F#", freq: 185.0 },
-         { note: "G", freq: 196.0 },
-         { note: "G#", freq: 207.65 },
-         { note: "A", freq: 220.0 },
-         { note: "A#", freq: 233.08 },
-         { note: "B", freq: 246.94 },
-
-         // C4-B4
-         { note: "C", freq: 261.63 },
-         { note: "C#", freq: 277.18 },
-         { note: "D", freq: 293.66 },
-         { note: "D#", freq: 311.13 },
-         { note: "E", freq: 329.63 },
-         { note: "F", freq: 349.23 },
-         { note: "F#", freq: 369.99 },
-         { note: "G", freq: 392.0 },
-         { note: "G#", freq: 415.3 },
-         { note: "A", freq: 440.0 },
-         { note: "A#", freq: 466.16 },
-         { note: "B", freq: 493.88 },
-
-         // C5-B5 (higher octave for lead guitars)
-         { note: "C", freq: 523.25 },
-         { note: "C#", freq: 554.37 },
-         { note: "D", freq: 587.33 },
-         { note: "D#", freq: 622.25 },
-         { note: "E", freq: 659.25 },
-         { note: "F", freq: 698.46 },
-         { note: "F#", freq: 739.99 },
-         { note: "G", freq: 783.99 },
-      ];
+      const noteFrequencies = this.generateNoteFrequencies();
 
       let closest = noteFrequencies[0];
       let minDiff = Math.abs(frequency - closest.freq);
