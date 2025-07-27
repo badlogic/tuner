@@ -122,31 +122,19 @@ export class PitchDetector {
       return this.analyzeBuffer();
    }
 
-   // Check if arrays are detached and reallocate if needed
-   private ensureArraysValid(): void {
-      try {
-         // Test if arrays are still valid by trying to access length
-         this.fftReal.length;
-         this.fftImag.length;
-      } catch (error) {
-         // Arrays are detached, reallocate them
-         console.log("⚠️ FFT arrays detached, reallocating...");
-         this.fftReal = this.fftImpl.allocFloats(FFT_SIZE);
-         this.fftImag = this.fftImpl.allocFloats(FFT_SIZE);
-      }
-   }
-
    // Exact pitch detection algorithm from reference
    private analyzeBuffer(): PitchResult | null {
-      // Ensure arrays are valid (reallocate if memory grew)
-      this.ensureArraysValid();
+      const startTime = performance.now();
 
+      const clearStart = performance.now();
       // Clear reusable arrays (zero them out)
       this.windowedBuffer.fill(0);
       this.fftReal.fill(0);
       this.fftImag.fill(0);
       this.magnitudeData.fill(0);
+      const clearTime = performance.now() - clearStart;
 
+      const windowStart = performance.now();
       // Apply Hanning window to buffer
       for (let i = 0; i < BUFFER_SIZE; i++) {
          this.windowedBuffer[i] = this.buffer[i] * this.hanningWindow[i];
@@ -157,23 +145,24 @@ export class PitchDetector {
          this.fftReal[i] = this.windowedBuffer[i];
          // fftImag[i] is already 0 from fill(0)
       }
+      const windowTime = performance.now() - windowStart;
 
       // Compute FFT using configured implementation
-      if (this.debug) {
-         console.time(`FFT (${this.fftImpl.name})`);
-      }
+      const fftStart = performance.now();
       this.fftImpl.fft(this.fftReal, this.fftImag);
-      if (this.debug) {
-         console.timeEnd(`FFT (${this.fftImpl.name})`);
-      }
+      const fftTime = performance.now() - fftStart;
 
+      const magnitudeStart = performance.now();
       // Get magnitude spectrum (first half only - positive frequencies)
       for (let i = 0; i < this.magnitudeData.length; i++) {
          this.magnitudeData[i] = Math.sqrt(this.fftReal[i] * this.fftReal[i] + this.fftImag[i] * this.fftImag[i]);
       }
+      const magnitudeTime = performance.now() - magnitudeStart;
 
+      const hpsStart = performance.now();
       // Apply HPS exactly like reference (modifies magnitudeData in place)
       this.harmonicProductSpectrum(this.magnitudeData);
+      const hpsTime = performance.now() - hpsStart;
 
       // Apply 60Hz high-pass filter exactly like reference (frequencies are pre-computed)
       // for i, freq in enumerate(frequencies):
@@ -238,6 +227,18 @@ export class PitchDetector {
          }
       }
       peaks.sort((a, b) => b.magnitude - a.magnitude);
+
+      const totalTime = performance.now() - startTime;
+
+      if (this.debug) {
+         console.log(`Timing breakdown (${this.fftImpl.name}):`);
+         console.log(`  Clear arrays: ${clearTime.toFixed(2)}ms`);
+         console.log(`  Windowing: ${windowTime.toFixed(2)}ms`);
+         console.log(`  FFT: ${fftTime.toFixed(2)}ms`);
+         console.log(`  Magnitude: ${magnitudeTime.toFixed(2)}ms`);
+         console.log(`  HPS: ${hpsTime.toFixed(2)}ms`);
+         console.log(`  Total: ${totalTime.toFixed(2)}ms`);
+      }
 
       return {
          frequency,

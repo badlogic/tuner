@@ -53,7 +53,7 @@ function readWavFile(filePath: string): Promise<Float32Array> {
 }
 
 async function testWavFile(fileName: string, expectedNote: string) {
-   console.log(`🎵 Testing WAV file: ${fileName} (expected ${expectedNote})...`);
+   console.log(`Testing ${fileName} (expected ${expectedNote})`);
 
    // Read the WAV file
    const samples = await readWavFile(`src/test/data/${fileName}`);
@@ -78,7 +78,7 @@ async function testWavFile(fileName: string, expectedNote: string) {
    // Bootstrap: Feed less samples to speed up testing (10 chunks = ~0.2s)
    const bootstrapChunks = 10;
    console.log(
-      `🔧 Bootstrapping with ${bootstrapChunks} chunks (${((bootstrapChunks * CHUNK_SIZE) / SAMPLING_RATE).toFixed(2)}s)...`,
+      `Bootstrapping with ${bootstrapChunks} chunks (${((bootstrapChunks * CHUNK_SIZE) / SAMPLING_RATE).toFixed(2)}s)`,
    );
 
    for (let i = 0; i < bootstrapChunks && i * CHUNK_SIZE < samples.length; i++) {
@@ -96,7 +96,7 @@ async function testWavFile(fileName: string, expectedNote: string) {
       }
    }
 
-   console.log("✅ Bootstrap complete. Starting detection...");
+   console.log("Bootstrap complete. Starting detection...");
    fs.appendFileSync(logFile, "DETECTION RESULTS:\n");
    fs.appendFileSync(logFile, "Timestamp(s) | Chunk | Frequency | Note | Cents | Confidence\n");
    fs.appendFileSync(logFile, "-------------------------------------------------------\n");
@@ -126,10 +126,10 @@ async function testWavFile(fileName: string, expectedNote: string) {
       if (i % 10 === 0) {
          if (result) {
             console.log(
-               `⏱️  ${timestamp.toFixed(2)}s: ${result.frequency.toFixed(1)}Hz → ${result.note}, ${result.cents.toFixed(0)} cents`,
+               `  ${timestamp.toFixed(2)}s: ${result.frequency.toFixed(1)}Hz → ${result.note}, ${result.cents.toFixed(0)} cents`,
             );
          } else {
-            console.log(`⏱️  ${timestamp.toFixed(2)}s: No detection`);
+            console.log(`  ${timestamp.toFixed(2)}s: No detection`);
          }
       }
 
@@ -146,7 +146,7 @@ async function testWavFile(fileName: string, expectedNote: string) {
    const frequencies = validResults.map((r) => r.frequency);
    const notes = validResults.map((r) => r.note);
 
-   console.log("\n📊 SUMMARY:");
+   console.log("\nSUMMARY:");
    console.log(`Total chunks processed: ${results.length}`);
    console.log(
       `Successful detections: ${validResults.length} (${((validResults.length / results.length) * 100).toFixed(1)}%)`,
@@ -193,7 +193,7 @@ async function testWavFile(fileName: string, expectedNote: string) {
       );
    }
 
-   console.log(`\n📝 Detailed log saved to: ${logFile}`);
+   console.log(`\nDetailed log saved to: ${logFile}`);
 }
 
 // CLI handling
@@ -221,9 +221,9 @@ async function main() {
 
       for (const file of files) {
          const expectedNote = `${file.replace(".wav", "").toUpperCase()}2`;
-         console.log(`\n${"=".repeat(60)}`);
+         console.log(`\n${"=".repeat(50)}`);
          await testWavFile(file, expectedNote);
-         console.log("=".repeat(60));
+         console.log("=".repeat(50));
       }
    }
 }
