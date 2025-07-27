@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import wav from "wav";
-import { FFT_IMPLEMENTATIONS } from "../fft.js";
-import { CHUNK_SIZE, PitchDetectorFFT, SAMPLING_RATE } from "../pitch-detector.js";
+import { PitchDetector } from "../pitch-detector.js";
 
 interface DetectionResult {
    timestamp: number;
@@ -18,10 +17,7 @@ function readWavFile(filePath: string): Promise<Float32Array> {
       const chunks: Buffer[] = [];
 
       reader.on("format", (format) => {
-         console.log("WAV format:", format);
-         if (format.sampleRate !== SAMPLING_RATE) {
-            console.warn(`Sample rate mismatch: expected ${SAMPLING_RATE}, got ${format.sampleRate}`);
-         }
+         console.log(`WAV format: ${format.channels} channels, ${format.sampleRate}Hz, ${format.bitDepth}-bit`);
       });
 
       reader.on("data", (chunk) => {
@@ -29,237 +25,113 @@ function readWavFile(filePath: string): Promise<Float32Array> {
       });
 
       reader.on("end", () => {
-         // Combine all chunks
-         const totalBuffer = Buffer.concat(chunks);
+         const buffer = Buffer.concat(chunks);
+         const samples = new Float32Array(buffer.length / 4); // 32-bit float
 
-         // Convert 16-bit signed PCM to Float32Array
-         const samples = new Float32Array(totalBuffer.length / 2);
          for (let i = 0; i < samples.length; i++) {
-            // Read 16-bit signed integer and normalize to [-1, 1]
-            const sample = totalBuffer.readInt16LE(i * 2);
-            samples[i] = sample / 32768.0;
+            samples[i] = buffer.readFloatLE(i * 4);
          }
 
-         console.log(`Read ${samples.length} samples (${(samples.length / SAMPLING_RATE).toFixed(2)}s)`);
          resolve(samples);
       });
 
       reader.on("error", reject);
 
-      // Read the file
-      const stream = fs.createReadStream(filePath);
-      stream.pipe(reader);
+      fs.createReadStream(filePath).pipe(reader);
    });
 }
 
-async function testWavFile(fileName: string, expectedNote: string, fftId: string = "bluestein") {
-   const fftImpl = FFT_IMPLEMENTATIONS[fftId];
-   if (!fftImpl) {
-      throw new Error(`Unknown FFT implementation: ${fftId}`);
-   }
+async function analyzeWavFile(filePath: string) {
+   console.log(`Analyzing WAV file: ${filePath}`);
 
-   console.log(`Testing ${fileName} (expected ${expectedNote}) with ${fftImpl.name}`);
+   try {
+      const audioData = await readWavFile(filePath);
+      console.log(`Loaded ${audioData.length} samples`);
 
-   // Initialize FFT if needed
-   if (fftImpl.init) {
-      await fftImpl.init();
-   }
+      // Create YIN detector (sample rate will be overridden based on WAV file)
+      const detector = new PitchDetector({
+         sampleRate: 48000, // Default, should match WAV file
+         debug: false,
+         threshold: 0.1,
+         fMin: 40.0,
+      });
 
-   // Read the WAV file
-   const samples = await readWavFile(`src/test/data/${fileName}`);
+      const chunkSize = detector.chunkSize;
+      const numChunks = Math.floor(audioData.length / chunkSize);
+      const results: DetectionResult[] = [];
 
-   // Create detector with specified implementation
-   const detector = new PitchDetectorFFT({
-      fftImplementation: fftImpl,
-      debug: false,
-   });
+      console.log(`Processing ${numChunks} chunks of ${chunkSize} samples each...`);
 
-   const results: DetectionResult[] = [];
-   const logFile = `src/test/data/${fileName.replace(".wav", "_detection_log.txt")}`;
+      for (let i = 0; i < numChunks; i++) {
+         const chunkStart = i * chunkSize;
+         const chunk = audioData.slice(chunkStart, chunkStart + chunkSize);
 
-   // Clear previous log
-   fs.writeFileSync(logFile, "WAV File Detection Test Results\n");
-   fs.appendFileSync(logFile, "=====================================\n");
-   fs.appendFileSync(logFile, `File: src/test/data/${fileName}\n`);
-   fs.appendFileSync(logFile, `Total samples: ${samples.length}\n`);
-   fs.appendFileSync(logFile, `Duration: ${(samples.length / SAMPLING_RATE).toFixed(2)}s\n`);
-   fs.appendFileSync(logFile, `Sample rate: ${SAMPLING_RATE}Hz\n\n`);
+         const result = detector.processAudioChunk(chunk);
+         const timestamp = (chunkStart / detector.sampleRate) * 1000; // ms
 
-   // Bootstrap: Feed less samples to speed up testing (10 chunks = ~0.2s)
-   const bootstrapChunks = 10;
-   console.log(
-      `Bootstrapping with ${bootstrapChunks} chunks (${((bootstrapChunks * CHUNK_SIZE) / SAMPLING_RATE).toFixed(2)}s)`,
-   );
-
-   for (let i = 0; i < bootstrapChunks && i * CHUNK_SIZE < samples.length; i++) {
-      const chunkStart = i * CHUNK_SIZE;
-      const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, samples.length);
-      const chunk = samples.slice(chunkStart, chunkEnd);
-
-      // Pad chunk if needed
-      if (chunk.length < CHUNK_SIZE) {
-         const paddedChunk = new Float32Array(CHUNK_SIZE);
-         paddedChunk.set(chunk);
-         detector.processAudioChunk(paddedChunk);
-      } else {
-         detector.processAudioChunk(chunk);
-      }
-   }
-
-   console.log("Bootstrap complete. Starting detection...");
-   fs.appendFileSync(logFile, "DETECTION RESULTS:\n");
-   fs.appendFileSync(logFile, "Timestamp(s) | Chunk | Frequency | Note | Cents | Confidence\n");
-   fs.appendFileSync(logFile, "-------------------------------------------------------\n");
-
-   // Process limited chunks for faster testing (first 50 chunks after bootstrap)
-   const totalChunks = Math.min(Math.floor(samples.length / CHUNK_SIZE), bootstrapChunks + 50);
-
-   for (let i = bootstrapChunks; i < totalChunks; i++) {
-      const chunkStart = i * CHUNK_SIZE;
-      const chunk = samples.slice(chunkStart, chunkStart + CHUNK_SIZE);
-      const timestamp = chunkStart / SAMPLING_RATE;
-
-      const result = detector.processAudioChunk(chunk);
-
-      const logEntry: DetectionResult = {
-         timestamp,
-         chunkIndex: i,
-         frequency: result?.frequency ?? 0,
-         note: result?.note,
-         cents: result?.cents,
-         confidence: result?.confidence,
-      };
-
-      results.push(logEntry);
-
-      // Log to console every 10 chunks to avoid spam
-      if (i % 10 === 0) {
          if (result) {
+            results.push({
+               timestamp,
+               chunkIndex: i,
+               frequency: result.frequency,
+               note: result.note,
+               cents: result.cents,
+            });
+
             console.log(
-               `  ${timestamp.toFixed(2)}s: ${result.frequency.toFixed(1)}Hz → ${result.note}, ${result.cents.toFixed(0)} cents`,
+               `Chunk ${i.toString().padStart(3)}: ${timestamp.toFixed(0).padStart(4)}ms - ` +
+                  `${result.frequency.toFixed(1)}Hz ${result.note} (${result.cents.toFixed(0)} cents)`,
             );
-         } else {
-            console.log(`  ${timestamp.toFixed(2)}s: No detection`);
          }
       }
 
-      // Log every result to file
-      const logLine = result
-         ? `${timestamp.toFixed(3)}s | ${i.toString().padStart(4)} | ${result.frequency.toFixed(1)}Hz | ${result.note} | ${result.cents.toFixed(0)} cents | ${result.confidence.toFixed(2)}\n`
-         : `${timestamp.toFixed(3)}s | ${i.toString().padStart(4)} | No detection | - | - | -\n`;
+      // Summary
+      if (results.length > 0) {
+         const avgFreq = results.reduce((sum, r) => sum + r.frequency, 0) / results.length;
+         const mostCommonNote = results.reduce(
+            (acc, r) => {
+               if (r.note) {
+                  acc[r.note] = (acc[r.note] || 0) + 1;
+               }
+               return acc;
+            },
+            {} as Record<string, number>,
+         );
 
-      fs.appendFileSync(logFile, logLine);
+         const dominantNote = Object.entries(mostCommonNote).sort(([, a], [, b]) => b - a)[0][0];
+
+         console.log(`\nSummary:`);
+         console.log(
+            `  Detections: ${results.length}/${numChunks} chunks (${((results.length / numChunks) * 100).toFixed(1)}%)`,
+         );
+         console.log(`  Average frequency: ${avgFreq.toFixed(1)}Hz`);
+         console.log(`  Dominant note: ${dominantNote}`);
+         console.log(
+            `  Detection rate: ${(results.length / (audioData.length / detector.sampleRate)).toFixed(1)} detections/second`,
+         );
+      } else {
+         console.log("No pitch detected in any chunk");
+      }
+   } catch (error) {
+      console.error("Error analyzing WAV file:", error);
+      process.exit(1);
    }
-
-   // Summary statistics
-   const validResults = results.filter((r) => r.frequency !== undefined);
-   const frequencies = validResults.map((r) => r.frequency);
-   const notes = validResults.map((r) => r.note);
-
-   console.log("\nSUMMARY:");
-   console.log(`Total chunks processed: ${results.length}`);
-   console.log(
-      `Successful detections: ${validResults.length} (${((validResults.length / results.length) * 100).toFixed(1)}%)`,
-   );
-
-   if (frequencies.length > 0) {
-      const minFreq = Math.min(...frequencies);
-      const maxFreq = Math.max(...frequencies);
-
-      console.log(`Frequency range: ${minFreq.toFixed(1)}Hz - ${maxFreq.toFixed(1)}Hz`);
-
-      // Count note occurrences
-      const noteCounts = notes.reduce(
-         (acc, note) => {
-            if (note) {
-               acc[note] = (acc[note] || 0) + 1;
-            }
-            return acc;
-         },
-         {} as Record<string, number>,
-      );
-
-      console.log("Most detected notes:");
-      Object.entries(noteCounts)
-         .sort(([, a], [, b]) => b - a)
-         .slice(0, 5)
-         .forEach(([note, count]) => {
-            console.log(`  ${note}: ${count} times (${((count / validResults.length) * 100).toFixed(1)}%)`);
-         });
-   }
-
-   // Write summary to log file
-   fs.appendFileSync(logFile, "\n=== SUMMARY ===\n");
-   fs.appendFileSync(logFile, `Total chunks: ${results.length}\n`);
-   fs.appendFileSync(
-      logFile,
-      `Successful detections: ${validResults.length} (${((validResults.length / results.length) * 100).toFixed(1)}%)\n`,
-   );
-
-   if (frequencies.length > 0) {
-      fs.appendFileSync(
-         logFile,
-         `Frequency range: ${Math.min(...frequencies).toFixed(1)}Hz - ${Math.max(...frequencies).toFixed(1)}Hz\n`,
-      );
-   }
-
-   console.log(`\nDetailed log saved to: ${logFile}`);
 }
 
-// CLI handling
+// Main execution
 const args = process.argv.slice(2);
 
-async function main() {
-   // Parse arguments: <fft> [filename]
-   const fftId = args[0];
-   const fileName = args[1];
-
-   if (!fftId) {
-      console.log("Usage: npx tsx src/test/test-wav-file.ts <fft> [filename]");
-      console.log("\nAvailable FFT implementations:");
-      Object.keys(FFT_IMPLEMENTATIONS).forEach((key) => {
-         console.log(`  ${key}: ${FFT_IMPLEMENTATIONS[key].description}`);
-      });
-      process.exit(1);
-   }
-
-   if (!FFT_IMPLEMENTATIONS[fftId]) {
-      console.error(`Unknown FFT implementation: ${fftId}`);
-      console.log("\nAvailable FFT implementations:");
-      Object.keys(FFT_IMPLEMENTATIONS).forEach((key) => {
-         console.log(`  ${key}: ${FFT_IMPLEMENTATIONS[key].description}`);
-      });
-      process.exit(1);
-   }
-
-   if (fileName) {
-      // Test specific file
-      const actualFileName = fileName.includes("/") ? fileName.split("/").pop() : fileName;
-      if (actualFileName) {
-         const expectedNote = `${actualFileName.replace(".wav", "").toUpperCase()}2`;
-         await testWavFile(actualFileName, expectedNote, fftId);
-      } else {
-         console.error("Please provide a valid WAV file name (e.g. test.wav)");
-         process.exit(1);
-      }
-   } else {
-      // Test all WAV files
-      const fs = await import("node:fs");
-      const files = fs
-         .readdirSync("src/test/data")
-         .filter((file) => file.endsWith(".wav"))
-         .sort();
-
-      console.log(`Found ${files.length} WAV files: ${files.join(", ")}`);
-      console.log(`Using FFT: ${fftId}`);
-
-      for (const file of files) {
-         const expectedNote = `${file.replace(".wav", "").toUpperCase()}2`;
-         console.log(`\n${"=".repeat(50)}`);
-         await testWavFile(file, expectedNote, fftId);
-         console.log("=".repeat(50));
-      }
-   }
+if (args.length === 0) {
+   console.log("Usage: node test-wav-file.ts <wav-file-path>");
+   console.log("Example: node test-wav-file.ts src/test/data/e.wav");
+   process.exit(1);
 }
 
-main().catch(console.error);
+const wavFilePath = args[0];
+
+if (!fs.existsSync(wavFilePath)) {
+   console.error(`File not found: ${wavFilePath}`);
+   process.exit(1);
+}
+
+analyzeWavFile(wavFilePath);

@@ -14,8 +14,7 @@ export function cleanAndCopyStaticFiles(src, dist) {
              !source.endsWith('.js') &&
              !source.endsWith('.jsx') &&
              !source.endsWith('.css') ||
-             source === src ||
-             source.endsWith('pitch-worklet.js'); // Include worklet file
+             source === src;
     }
   });
 }
@@ -23,21 +22,20 @@ export function cleanAndCopyStaticFiles(src, dist) {
 /** Watch static files and copy on change */
 export function watchStaticFiles(src, dist, callback) {
   console.log('Watching static files...');
-  
+
   const watcher = fsWatch(src, { recursive: true }, (eventType, filename) => {
     if (!filename) return;
-    
+
     // Check if it's a static file (not ts/tsx/js/jsx/css) or our worklet
-    if ((!filename.endsWith('.ts') && 
-        !filename.endsWith('.tsx') && 
-        !filename.endsWith('.js') && 
-        !filename.endsWith('.jsx') && 
-        !filename.endsWith('.css')) ||
-        filename.endsWith('pitch-worklet.js')) {
-      
+    if ((!filename.endsWith('.ts') &&
+        !filename.endsWith('.tsx') &&
+        !filename.endsWith('.js') &&
+        !filename.endsWith('.jsx') &&
+        !filename.endsWith('.css'))) {
+
       const srcPath = join(src, filename);
       const destPath = join(dist, filename);
-      
+
       if (eventType === 'rename') {
         // Check if file exists (was added) or was removed
         if (existsSync(srcPath)) {
@@ -74,19 +72,19 @@ export function watchStaticFiles(src, dist, callback) {
       }
     }
   });
-  
+
   return watcher;
 }
 
 // CLI interface
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [, , src, dist, watchFlag] = process.argv;
-  
+
   if (!src || !dist) {
     console.error('Usage: node static-files.js <src> <dist> [--watch]');
     process.exit(1);
   }
-  
+
   if (watchFlag === '--watch') {
     cleanAndCopyStaticFiles(src, dist);
     watchStaticFiles(src, dist);

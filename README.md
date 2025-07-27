@@ -1,18 +1,22 @@
 # Guitar Tuner
 
-Browser-based guitar tuner using Web Audio API.
+Browser-based guitar tuner using Web Audio API and YIN pitch detection algorithm.
 
 https://tuner.mariozechner.at
 
-## Credits
+## Features
 
-The pitch detection algorithm is based on [GuitarTuner](https://github.com/TomSchimansky/GuitarTuner/tree/master) by [TomSchimansky](https://github.com/TomSchimansky), implemented with Harmonic Product Spectrum (HPS) analysis and optimized for real-time performance with WebAssembly acceleration.
+- **YIN Pitch Detection**: Industry-standard algorithm for accurate pitch detection
+- **Extended Range**: Supports baritone guitars and extended range instruments (40Hz - 800Hz)
+- **Real-time Performance**: Optimized for low-latency audio processing
+- **Visual Feedback**: Tuning needle with color-coded accuracy
+- **Browser-based**: No installation required, works in any modern browser
 
 ## Usage
 
 1. Click START
 2. Allow microphone access
-3. Play a guitar string
+3. Pluck a single guitar string
 4. Tune until the needle is green and centered
 
 Requires a browser with Web Audio API support.
@@ -67,25 +71,33 @@ To deploy to your own server, edit the server details in `run.sh` and set up SSH
 tuner/
 ├── src/                          # Source files
 │   ├── frontend/                 # Frontend application
-│   │   ├── index.html           # Main HTML with SVG tuner display
-│   │   ├── index.ts             # Main TypeScript application
-│   │   └── styles.css           # Tailwind CSS styles
-│   ├── pitch-detector.ts         # Core pitch detection algorithm
+│   │   ├── index.html            # Main HTML with SVG tuner display
+│   │   ├── index.ts              # Main TypeScript application
+│   │   ├── pitch-worklet.js      # AudioWorklet for real-time processing
+│   │   └── styles.css            # Tailwind CSS styles
+│   ├── pitch-detector.ts         # YIN pitch detection algorithm
 │   └── test/                     # Test suite
-│       └── test-frequency-to-note.ts  # Comprehensive pitch detection tests
+│       ├── frequency-to-note.test.ts  # YIN accuracy tests
+│       └── test-wav-file.ts      # WAV file analysis tool
 ├── dist/                         # Build output (git ignored)
-│   ├── index.html               # Built HTML
-│   ├── index.js                 # Bundled JavaScript
-│   └── styles.css               # Compiled CSS
+│   ├── index.html                # Built HTML
+│   ├── index.js                  # Bundled JavaScript
+│   ├── index.js.map              # Source map
+│   └── styles.css                # Compiled CSS
 ├── infra/                        # Infrastructure
-│   ├── build.js                 # Build script
-│   ├── Caddyfile                # Caddy web server configuration
-│   ├── docker-compose.yml       # Base configuration
-│   ├── docker-compose.dev.yml   # Development overrides
-│   └── docker-compose.prod.yml  # Production overrides
-├── run.sh                        # All-in-one CLI
+│   ├── build.js                  # Build script
+│   ├── static-files.js           # Static file handling
+│   ├── tsup.config.js            # TypeScript bundler config
+│   ├── Caddyfile                 # Caddy web server configuration
+│   ├── docker-compose.yml        # Base configuration
+│   ├── docker-compose.dev.yml    # Development overrides
+│   └── docker-compose.prod.yml   # Production overrides
+├── build.json                    # Build & watch commands
+├── run.sh                        # All-in-one CLI to build, dev, deploy
 ├── package.json                  # Dependencies and scripts
-├── LICENSE                       # MIT License
+├── biome.json                    # Code formatting and linting
+├── tsconfig.json                 # TypeScript configuration
+├── LICENSE                       # GPL-2 License
 └── README.md                     # This file
 ```
 
@@ -101,35 +113,26 @@ PORT=8081 ./run.sh dev    # Start on custom port
 ./run.sh logs             # View container logs locally
 ```
 
-## Building WASM FFT
-
-The guitar tuner includes an optional WebAssembly-accelerated FFT implementation for improved performance. To build the WASM module:
-
-### Prerequisites
-
-Install required tools with Homebrew:
+## Testing
 
 ```bash
-# Install LLVM (clang compiler) and LLD (WASM linker)
-brew install llvm lld
+# Run YIN pitch detection tests
+npm test
 
-# Optional: Install WABT (WebAssembly Binary Toolkit) for debugging
-brew install wabt
+# Test with audio files
+npm run build
+node src/test/test-wav-file.ts path/to/audio.wav
 ```
 
-### Building
+## Algorithm Details
 
-```bash
-# Build the WASM FFT module
-./build-wasm.sh
-```
+The tuner uses the **YIN algorithm** for pitch detection:
 
-This compiles `src/wasm/fft.c` to `src/frontend/fft.wasm` using:
-- **clang** (from LLVM) - C compiler with WASM target
-- **wasm-ld** (from LLD) - WebAssembly linker
-
-The generated WASM file is committed to git so end users don't need the build tools.
+- **Autocorrelation-based**: More robust than FFT for musical instruments
+- **Real-time capable**: ~1-5ms processing time for 2048 sample frames
+- **Parabolic interpolation**: Sub-sample accuracy for precise frequency estimation
+- **Note-aware smoothing**: Stable display with quick response to note changes
 
 ## License
 
-GPL 2 License - see [LICENSE](LICENSE) file for details.
+GPL-2 License - see [LICENSE](LICENSE) file for details.
