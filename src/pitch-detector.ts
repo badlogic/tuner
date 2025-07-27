@@ -140,7 +140,7 @@ export class PitchDetector {
    private analyzeBuffer(): PitchResult | null {
       // Ensure arrays are valid (reallocate if memory grew)
       this.ensureArraysValid();
-      
+
       // Clear reusable arrays (zero them out)
       this.windowedBuffer.fill(0);
       this.fftReal.fill(0);

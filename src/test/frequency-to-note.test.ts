@@ -55,9 +55,13 @@ async function testFFTImplementation(fftImpl: FFTImplementation) {
 
          if (noteCorrect && freqCorrect && centsReasonable) {
             passed++;
-            console.log(`  ✅ ${testCase.freq}Hz → ${result.frequency.toFixed(1)}Hz, ${result.note}, ${result.cents.toFixed(0)} cents`);
+            console.log(
+               `  ✅ ${testCase.freq}Hz → ${result.frequency.toFixed(1)}Hz, ${result.note}, ${result.cents.toFixed(0)} cents`,
+            );
          } else {
-            console.log(`  ❌ ${testCase.freq}Hz → ${result.frequency.toFixed(1)}Hz, ${result.note}, ${result.cents.toFixed(0)} cents (expected ${testCase.expectedNote})`);
+            console.log(
+               `  ❌ ${testCase.freq}Hz → ${result.frequency.toFixed(1)}Hz, ${result.note}, ${result.cents.toFixed(0)} cents (expected ${testCase.expectedNote})`,
+            );
          }
       } else {
          console.log(`  ❌ ${testCase.freq}Hz → No detection`);

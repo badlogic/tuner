@@ -174,8 +174,8 @@ async function loadWasmFFT(): Promise<void> {
          },
          ...wasmAllocator.getImports(),
          env: {
-            memory: memory
-         }
+            memory: memory,
+         },
       };
       const wasmResult = await WebAssembly.instantiate(wasmBytes, wasmImports);
       wasmModule = wasmResult.instance;

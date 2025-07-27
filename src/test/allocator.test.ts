@@ -1,5 +1,5 @@
-import { test } from "node:test";
 import assert from "node:assert";
+import { test } from "node:test";
 import { WasmAllocator } from "../wasm/allocator.js";
 
 function createMemory(pages = 1): WebAssembly.Memory {
