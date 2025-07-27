@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import wav from "wav";
 import { FFT_IMPLEMENTATIONS } from "../fft.js";
-import { CHUNK_SIZE, PitchDetector, SAMPLING_RATE } from "../pitch-detector.js";
+import { CHUNK_SIZE, PitchDetectorFFT, SAMPLING_RATE } from "../pitch-detector.js";
 
 interface DetectionResult {
    timestamp: number;
@@ -69,7 +69,7 @@ async function testWavFile(fileName: string, expectedNote: string, fftId: string
    const samples = await readWavFile(`src/test/data/${fileName}`);
 
    // Create detector with specified implementation
-   const detector = new PitchDetector({
+   const detector = new PitchDetectorFFT({
       fftImplementation: fftImpl,
       debug: false,
    });

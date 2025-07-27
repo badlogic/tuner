@@ -1,5 +1,4 @@
-import { FFT_IMPLEMENTATIONS } from "../fft.js";
-import { PitchDetector, type PitchResult, SAMPLING_RATE } from "../pitch-detector.js";
+import { PitchDetectorYIN, type PitchResult } from "../pitch-detector.js";
 
 // Live reload for development
 if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
@@ -9,11 +8,13 @@ if (window.location.hostname === "localhost" || window.location.hostname === "12
 
 class GuitarTuner {
    private audioContext: AudioContext | null = null;
-   private workletNode: AudioWorkletNode | null = null;
+   private analyser: AnalyserNode | null = null;
    private microphone: MediaStreamAudioSourceNode | null = null;
    private isActive = false;
+   private animationId: number | null = null;
+   private dataArray: Float32Array | null = null;
 
-   private pitchDetector?: PitchDetector;
+   private pitchDetector?: PitchDetectorYIN;
 
    private noteDisplay = document.getElementById("note-display") as HTMLDivElement;
    private frequencyDisplay = document.getElementById("frequency-display") as HTMLDivElement;
@@ -27,21 +28,20 @@ class GuitarTuner {
    private debugVisible = false;
 
    constructor() {
-      // Initialize WASM FFT
-      this.initializePitchDetector();
       this.startBtn.addEventListener("click", () => this.toggleTuner());
       this.debugBtn.addEventListener("click", () => this.toggleDebug());
    }
 
-   async initializePitchDetector() {
-      // Initialize WASM FFT first
-      await FFT_IMPLEMENTATIONS.wasmCooleyTukey.init?.();
-
-      // Create pitch detector with WASM FFT
-      this.pitchDetector = new PitchDetector({
-         fftImplementation: FFT_IMPLEMENTATIONS.wasmCooleyTukey,
+   async initializePitchDetector(sampleRate: number) {
+      // Create YIN pitch detector with actual sample rate from AudioContext
+      this.pitchDetector = new PitchDetectorYIN({
+         sampleRate,
          debug: false,
+         threshold: 0.1,
+         fMin: 40.0, // Lower minimum for baritone guitars
       });
+
+      console.log(`Pitch detector: ${this.pitchDetector.sampleRate}Hz, ${this.pitchDetector.chunkSize} samples`);
    }
 
    toggleDebug() {
@@ -91,57 +91,35 @@ class GuitarTuner {
 
    async start() {
       try {
-         // Request exact sample rate to match reference implementation
-         const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-               echoCancellation: false,
-               noiseSuppression: false,
-               autoGainControl: false,
-               sampleRate: SAMPLING_RATE, // Request 48kHz
-            },
-         });
+         // Use default audio setup like test.html
+         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-         // Create AudioContext with exact sample rate
-         this.audioContext = new AudioContext({ sampleRate: SAMPLING_RATE });
+         // Create AudioContext with default sample rate
+         this.audioContext = new AudioContext();
 
          console.log(`AudioContext sample rate: ${this.audioContext.sampleRate}Hz`);
 
-         // Load AudioWorklet processor for real-time audio processing
-         await this.audioContext.audioWorklet.addModule("./pitch-worklet.js");
+         // Initialize pitch detector with actual sample rate
+         await this.initializePitchDetector(this.audioContext.sampleRate);
 
-         // Create worklet node
-         this.workletNode = new AudioWorkletNode(this.audioContext, "pitch-processor");
-
-         // Handle messages from audio worklet
-         this.workletNode.port.onmessage = (event) => {
-            if (!this.isActive) return;
-
-            const { type, data } = event.data;
-
-            if (type === "audioChunk" && this.pitchDetector) {
-               try {
-                  const result = this.pitchDetector.processAudioChunk(data);
-
-                  if (result) {
-                     this.updateDisplay(result.note, result.frequency, result.cents);
-                     if (this.debugVisible) {
-                        this.drawSpectrum(result);
-                     }
-                  }
-               } catch (error) {
-                  console.error("Error processing audio chunk:", error);
-               }
-            }
-         };
-
+         // Create analyser like test.html
+         this.analyser = this.audioContext.createAnalyser();
          this.microphone = this.audioContext.createMediaStreamSource(stream);
-         this.microphone.connect(this.workletNode);
-         this.workletNode.connect(this.audioContext.destination); // Prevent garbage collection
+
+         // Configure analyser exactly like test.html
+         this.analyser.fftSize = (this.pitchDetector?.chunkSize || 2048) * 2; // FRAME_SIZE * 2 = 4096
+         this.analyser.smoothingTimeConstant = 0.8; // Built-in smoothing like test.html
+         this.dataArray = new Float32Array(this.analyser.fftSize);
+
+         this.microphone.connect(this.analyser);
 
          this.isActive = true;
          this.startBtn.textContent = "STOP";
          this.startBtn.classList.remove("bg-green-600", "hover:bg-green-700");
          this.startBtn.classList.add("bg-red-600", "hover:bg-red-700");
+
+         // Start processing audio like test.html
+         this.processAudio();
       } catch (error) {
          console.error("Error accessing microphone:", error);
       }
@@ -149,18 +127,24 @@ class GuitarTuner {
 
    stop() {
       this.isActive = false;
-      if (this.workletNode) {
-         this.workletNode.disconnect();
-         this.workletNode = null;
+
+      if (this.animationId) {
+         cancelAnimationFrame(this.animationId);
+         this.animationId = null;
       }
+
       if (this.microphone) {
          this.microphone.disconnect();
          this.microphone = null;
       }
+
       if (this.audioContext) {
          this.audioContext.close();
          this.audioContext = null;
       }
+
+      this.analyser = null;
+      this.dataArray = null;
 
       this.startBtn.textContent = "START";
       this.startBtn.classList.remove("bg-red-600", "hover:bg-red-700");
@@ -168,6 +152,34 @@ class GuitarTuner {
       this.noteDisplay.textContent = "A";
       this.frequencyDisplay.textContent = "440.00 Hz";
       this.needle.setAttribute("transform", "rotate(0, 100, 100)");
+   }
+
+   processAudio() {
+      if (!this.isActive || !this.analyser || !this.dataArray || !this.pitchDetector) {
+         return;
+      }
+
+      // Get audio data like test.html
+      this.analyser.getFloatTimeDomainData(this.dataArray);
+
+      // Extract frame for YIN (exactly like test.html)
+      const frame = this.dataArray.slice(0, this.pitchDetector.chunkSize); // FRAME_SIZE = 2048
+
+      try {
+         const result = this.pitchDetector.processAudioChunk(frame);
+
+         if (result) {
+            this.updateDisplay(result.note, result.frequency, result.cents);
+            if (this.debugVisible) {
+               this.drawSpectrum(result);
+            }
+         }
+      } catch (error) {
+         console.error("Error processing audio:", error);
+      }
+
+      // Continue processing like test.html
+      this.animationId = requestAnimationFrame(() => this.processAudio());
    }
 
    drawSpectrum(result: PitchResult) {
@@ -178,6 +190,25 @@ class GuitarTuner {
       const { hpsData, sampleRate } = result.debugData;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Check if spectrum data is available
+      if (!hpsData || hpsData.length === 0) {
+         // Display "not available" message
+         ctx.fillStyle = "#9ca3af";
+         ctx.font = "20px monospace";
+         ctx.textAlign = "center";
+         ctx.fillText("Spectrum visualization not available", canvas.width / 2, canvas.height / 2);
+
+         // Still show the detected frequency
+         ctx.fillStyle = "#10b981";
+         ctx.font = "16px monospace";
+         ctx.fillText(
+            `Detected: ${result.frequency.toFixed(1)}Hz (${result.note})`,
+            canvas.width / 2,
+            canvas.height / 2 + 30,
+         );
+         return;
+      }
 
       // Use exact frequency calculation from reference
       const frequencyStep = sampleRate / (hpsData.length * 2);
@@ -307,6 +338,12 @@ class GuitarTuner {
    updateDisplay(note: string, frequency: number, cents: number) {
       this.noteDisplay.textContent = note;
       this.frequencyDisplay.textContent = `${frequency.toFixed(1)} Hz`;
+
+      // Check for NaN values and default to 0
+      if (Number.isNaN(cents) || Number.isNaN(frequency)) {
+         console.warn("Invalid frequency or cents:", { frequency, cents });
+         cents = 0;
+      }
 
       const maxCents = 50;
       const clampedCents = Math.max(-maxCents, Math.min(maxCents, cents));

@@ -2,10 +2,11 @@
 // Runs on the audio thread (real-time safe)
 
 class PitchProcessor extends AudioWorkletProcessor {
-   constructor() {
+   constructor(options) {
       super();
-      this.bufferSize = 1024; // Match CHUNK_SIZE
+      this.bufferSize = options.processorOptions?.chunkSize || 1024;
       this.buffer = [];
+      console.log(`AudioWorklet initialized with buffer size: ${this.bufferSize}`);
    }
 
    process(inputs) {

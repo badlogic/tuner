@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { test } from "node:test";
 import { FFT_IMPLEMENTATIONS, type FFTImplementation } from "../fft.js";
-import { generateTestSignal, PitchDetector, SAMPLING_RATE } from "../pitch-detector.js";
+import { generateTestSignal, PitchDetectorFFT, SAMPLING_RATE } from "../pitch-detector.js";
 
 async function testFFTImplementation(fftImpl: FFTImplementation) {
    // Initialize FFT if it has an init function
@@ -9,7 +9,7 @@ async function testFFTImplementation(fftImpl: FFTImplementation) {
       await fftImpl.init();
    }
 
-   const detector = new PitchDetector({
+   const detector = new PitchDetectorFFT({
       fftImplementation: fftImpl,
       debug: false,
    });

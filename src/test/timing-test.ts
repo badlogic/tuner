@@ -1,5 +1,5 @@
 import { FFT_IMPLEMENTATIONS, type FFTImplementation } from "../fft.js";
-import { generateTestSignal, PitchDetector } from "../pitch-detector.js";
+import { generateTestSignal, PitchDetectorFFT } from "../pitch-detector.js";
 
 async function testImplementation(name: string, impl: FFTImplementation) {
    console.log(`\n=== Testing ${name} ===`);
@@ -8,7 +8,7 @@ async function testImplementation(name: string, impl: FFTImplementation) {
       await impl.init();
    }
 
-   const detector = new PitchDetector({
+   const detector = new PitchDetectorFFT({
       fftImplementation: impl,
       debug: true,
    });
