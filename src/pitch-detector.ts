@@ -21,6 +21,10 @@ export class PitchDetector {
    private threshold: number;
    private fMin: number;
    private a4Frequency: number;
+   
+   // Frequency smoothing
+   private frequencyHistory: number[] = [];
+   private readonly maxHistorySize = 4;
 
    constructor(options: PitchDetectorOptions) {
       this.sampleRate = options.sampleRate;
@@ -60,18 +64,44 @@ export class PitchDetector {
          }
          return null;
       }
-      const noteInfo = this.getClosestNote(frequency);
+      
+      // Apply frequency smoothing
+      const smoothedFrequency = this.smoothFrequency(frequency);
+      const noteInfo = this.getClosestNote(smoothedFrequency);
       const totalTime = performance.now() - startTime;
 
       if (this.debug) {
-         console.log(`YIN detection: ${frequency.toFixed(2)}Hz (${noteInfo.note}) in ${totalTime.toFixed(2)}ms`);
+         console.log(`YIN detection: ${frequency.toFixed(2)}Hz → ${smoothedFrequency.toFixed(2)}Hz (${noteInfo.note}) in ${totalTime.toFixed(2)}ms`);
       }
 
       return {
-         frequency,
+         frequency: smoothedFrequency,
          note: noteInfo.note,
          cents: noteInfo.cents,
       };
+   }
+
+   private smoothFrequency(newFrequency: number): number {
+      // Add new frequency to history
+      this.frequencyHistory.push(newFrequency);
+      
+      // Limit history size
+      if (this.frequencyHistory.length > this.maxHistorySize) {
+         this.frequencyHistory.shift();
+      }
+      
+      // Calculate weighted average - newer values have more weight
+      // Weights: [1, 2, 3, 4] for a 4-sample history
+      let weightedSum = 0;
+      let totalWeight = 0;
+      
+      for (let i = 0; i < this.frequencyHistory.length; i++) {
+         const weight = i + 1; // Weight increases with recency
+         weightedSum += this.frequencyHistory[i] * weight;
+         totalWeight += weight;
+      }
+      
+      return weightedSum / totalWeight;
    }
 
    // YIN Pitch Detection Algorithm

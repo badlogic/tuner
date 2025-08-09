@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tuner Debug Analysis</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: #f8f9fa; padding: 15px; border-radius: 6px; border-left: 4px solid #007bff; }
+        .stat-value { font-size: 24px; font-weight: bold; color: #007bff; }
+        .stat-label { color: #6c757d; font-size: 14px; }
+        .chart-container { margin: 30px 0; }
+        .outliers { margin-top: 30px; }
+        .outlier-item { background: #fff3cd; padding: 10px; margin: 5px 0; border-radius: 4px; border-left: 4px solid #ffc107; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: #f8f9fa; font-weight: bold; }
+        .outlier-row { background: #fff3cd; }
+        .good-row { background: #d4edda; }
+        .error { text-align: center; padding: 40px; color: #dc3545; }
+        .back-btn { display: inline-block; margin-bottom: 20px; padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        .back-btn:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="index.html" class="back-btn">← Back to Tuner</a>
+        <div id="content">
+            <div class="error">
+                <h2>Loading debug data...</h2>
+                <p>Please wait while we analyze your tuning session.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function detectOutliers(recordings) {
+            // Filter out invalid frequencies for outlier detection
+            const validFrequencies = recordings
+                .map(r => r.frequency)
+                .filter(f => !isNaN(f) && isFinite(f) && f > 0);
+            const sorted = [...validFrequencies].sort((a, b) => a - b);
+            
+            // Calculate quartiles for IQR method
+            const q1 = sorted[Math.floor(sorted.length * 0.25)];
+            const q3 = sorted[Math.floor(sorted.length * 0.75)];
+            const iqr = q3 - q1;
+            const lowerBound = q1 - 1.5 * iqr;
+            const upperBound = q3 + 1.5 * iqr;
+            
+            // Calculate median and mean for reference
+            const median = sorted[Math.floor(sorted.length * 0.5)];
+            const mean = validFrequencies.reduce((sum, f) => sum + f, 0) / validFrequencies.length;
+            
+            // Mark outliers and add metadata
+            return recordings.map(r => ({
+                ...r,
+                isOutlier: r.frequency < lowerBound || r.frequency > upperBound,
+                deviationFromMedian: r.frequency - median,
+                deviationFromMean: r.frequency - mean
+            }));
+        }
+
+        function generateReport(debugData) {
+            const recordings = debugData.recordings;
+            const enrichedRecordings = detectOutliers(recordings);
+            
+            // Calculate statistics
+            const frequencies = recordings.map(r => r.frequency);
+            const avg = frequencies.length > 0 ? frequencies.reduce((sum, f) => sum + f, 0) / frequencies.length : 0;
+            const min = frequencies.length > 0 ? Math.min(...frequencies) : 0;
+            const max = frequencies.length > 0 ? Math.max(...frequencies) : 0;
+            const stdDev = frequencies.length > 0 ? 
+                Math.sqrt(frequencies.reduce((sum, f) => sum + Math.pow(f - avg, 2), 0) / frequencies.length) : 0;
+            
+            // Get outliers from enriched data
+            const outliers = enrichedRecordings.filter(r => r.isOutlier);
+            
+            // Calculate median for reference
+            const sorted = [...frequencies].sort((a, b) => a - b);
+            const median = sorted[Math.floor(sorted.length * 0.5)];
+            
+            // Prepare chart data - separate valid and invalid frequencies
+            const validRecordings = enrichedRecordings.filter(r => 
+                !isNaN(r.frequency) && isFinite(r.frequency) && r.frequency > 0
+            );
+            
+            const invalidRecordings = enrichedRecordings.filter(r => 
+                isNaN(r.frequency) || !isFinite(r.frequency) || r.frequency <= 0
+            );
+            
+            const chartData = validRecordings.map(r => ({
+                x: r.timestamp,
+                y: r.frequency,
+                isOutlier: r.isOutlier,
+                note: r.note,
+                cents: r.cents
+            }));
+            
+            const html = `
+                <div class="header">
+                    <h1>Live Tuner Debug Analysis</h1>
+                    <h2>Session recorded at ${new Date(debugData.exportTime).toLocaleString()}</h2>
+                    <p>Analysis of ${recordings.length} live detections over ${(debugData.duration / 1000).toFixed(1)} seconds</p>
+                    <p><strong>A4 Reference:</strong> ${debugData.a4Frequency}Hz</p>
+                </div>
+                
+                <div class="chart-container">
+                    <canvas id="frequencyChart" width="800" height="400"></canvas>
+                </div>
+                
+                <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                    <h4>Outlier Filtering</h4>
+                    <div style="margin: 10px 0;">
+                        <label><input type="checkbox" id="enable-filter" checked> <strong>Enable Filter</strong> (stable=<input type="number" id="stable-threshold" value="1.5" min="0.5" max="5" step="0.1" style="width: 50px;">Hz, change=<input type="number" id="change-threshold" value="15" min="5" max="50" style="width: 50px;">Hz)</label>
+                    </div>
+                    <span style="color: #666; font-size: 12px;">Filter updates automatically</span>
+                </div>
+                
+                <h3>Detection Data <button id="copy-data-btn" style="margin-left: 10px; padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Copy Table Data</button></h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time (ms)</th>
+                            <th>Frequency (Hz)</th>
+                            <th>Note</th>
+                            <th>Cents</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Table content will be populated by JavaScript -->
+                    </tbody>
+                </table>
+                <p><em>Showing all ${recordings.length} detections</em></p>
+            `;
+
+            document.getElementById('content').innerHTML = html;
+
+            // Add copy button functionality
+            document.getElementById('copy-data-btn').addEventListener('click', () => {
+                const copyText = enrichedRecordings.map(r => {
+                    const freq = !isNaN(r.frequency) && isFinite(r.frequency) ? r.frequency.toFixed(2) : 'N/A';
+                    const cents = r.cents && !isNaN(r.cents) ? r.cents.toFixed(1) : 'N/A';
+                    return `${r.timestamp.toFixed(1)}\t${freq}\t${r.note || 'N/A'}\t${cents}`;
+                }).join('\n');
+                
+                navigator.clipboard.writeText(copyText).then(() => {
+                    const btn = document.getElementById('copy-data-btn');
+                    const originalText = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    btn.style.background = '#28a745';
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.style.background = '#007bff';
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy: ', err);
+                    alert('Failed to copy data to clipboard');
+                });
+            });
+
+            // Filtering functions
+            function applyMovingWindowFilter(recordings, windowSize, threshold) {
+                const results = [];
+                
+                for (let i = 0; i < recordings.length; i++) {
+                    const r = recordings[i];
+                    
+                    if (isNaN(r.frequency) || !isFinite(r.frequency)) {
+                        results.push({ ...r, filteredOut: true, filterReason: 'Invalid' });
+                        continue;
+                    }
+                    
+                    // Get previous VALID samples only (excluding outliers)
+                    const validPrevious = results
+                        .filter(prev => !prev.filteredOut && !isNaN(prev.frequency) && isFinite(prev.frequency))
+                        .slice(-windowSize) // Take last N valid samples
+                        .map(prev => prev.frequency);
+                    
+                    if (validPrevious.length === 0) {
+                        // First sample or no valid previous samples - accept it
+                        results.push({ ...r, filteredOut: false });
+                        continue;
+                    }
+                    
+                    // If we have very few valid samples, be more lenient
+                    if (validPrevious.length < 3) {
+                        const adaptiveThreshold = threshold * 3; // 3x more lenient initially
+                        const sorted = [...validPrevious].sort((a, b) => a - b);
+                        const median = sorted[Math.floor(sorted.length / 2)];
+                        const deviation = Math.abs(r.frequency - median);
+                        
+                        if (i < 15) {
+                            console.log(`Reading ${i} (adaptive): freq=${r.frequency.toFixed(1)}, validPrevious=[${validPrevious.map(f => f.toFixed(1)).join(',')}], median=${median.toFixed(1)}, deviation=${deviation.toFixed(1)}, adaptiveThreshold=${adaptiveThreshold}`);
+                        }
+                        
+                        const isOutlier = deviation > adaptiveThreshold;
+                        results.push({
+                            ...r,
+                            filteredOut: isOutlier,
+                            filterReason: isOutlier ? `Adaptive: ${deviation.toFixed(1)}Hz from median ${median.toFixed(1)}Hz (threshold=${adaptiveThreshold})` : null
+                        });
+                        continue;
+                    }
+                    
+                    // Calculate median of valid previous samples
+                    const sorted = [...validPrevious].sort((a, b) => a - b);
+                    const median = sorted[Math.floor(sorted.length / 2)];
+                    const deviation = Math.abs(r.frequency - median);
+                    
+                    // Debug output for first few readings
+                    if (i < 15) {
+                        console.log(`Reading ${i}: freq=${r.frequency.toFixed(1)}, validPrevious=[${validPrevious.map(f => f.toFixed(1)).join(',')}], median=${median.toFixed(1)}, deviation=${deviation.toFixed(1)}, threshold=${threshold}`);
+                    }
+                    
+                    const isOutlier = deviation > threshold;
+                    results.push({
+                        ...r,
+                        filteredOut: isOutlier,
+                        filterReason: isOutlier ? `Moving window: ${deviation.toFixed(1)}Hz from median ${median.toFixed(1)}Hz` : null
+                    });
+                }
+                
+                return results;
+            }
+
+            function applyRateChangeFilter(recordings, maxRate) {
+                return recordings.map((r, i) => {
+                    if (isNaN(r.frequency) || !isFinite(r.frequency)) return { ...r, filteredOut: true, filterReason: 'Invalid' };
+                    if (i === 0) return { ...r, filteredOut: false };
+                    
+                    const prevValid = recordings.slice(0, i).reverse().find(x => !isNaN(x.frequency) && isFinite(x.frequency));
+                    if (!prevValid) return { ...r, filteredOut: false };
+                    
+                    const rate = Math.abs(r.frequency - prevValid.frequency);
+                    return {
+                        ...r,
+                        filteredOut: rate > maxRate,
+                        filterReason: rate > maxRate ? `Rate change: ${rate.toFixed(1)}Hz/reading` : null
+                    };
+                });
+            }
+
+            function applyAdaptiveRegimeFilter(recordings, stableThreshold, changeThreshold) {
+                const results = [];
+                let stableRegime = null; // {mean, variance, samples, startIndex}
+                let candidateRegime = null;
+                
+                for (let i = 0; i < recordings.length; i++) {
+                    const r = recordings[i];
+                    
+                    if (isNaN(r.frequency) || !isFinite(r.frequency)) {
+                        results.push({ ...r, filteredOut: true, filterReason: 'Invalid' });
+                        continue;
+                    }
+                    
+                    const freq = r.frequency;
+                    
+                    if (!stableRegime) {
+                        // Bootstrap: accept first sample as start of regime
+                        stableRegime = {mean: freq, samples: [freq], startIndex: i};
+                        results.push({...r, filteredOut: false, filterReason: null});
+                        if (i < 10) console.log(`Regime ${i}: Bootstrap regime at ${freq.toFixed(1)}Hz`);
+                        continue;
+                    }
+                    
+                    const deviation = Math.abs(freq - stableRegime.mean);
+                    
+                    if (deviation <= stableThreshold) {
+                        // Fits current stable regime - add to it
+                        stableRegime.samples.push(freq);
+                        stableRegime.mean = stableRegime.samples.reduce((a,b) => a+b) / stableRegime.samples.length;
+                        results.push({...r, filteredOut: false, filterReason: null});
+                        candidateRegime = null; // Reset any candidate
+                        
+                        if (i < 10) console.log(`Regime ${i}: Added to stable regime (${freq.toFixed(1)}Hz, mean=${stableRegime.mean.toFixed(1)}Hz, dev=${deviation.toFixed(1)}Hz)`);
+                        
+                    } else if (deviation <= changeThreshold) {
+                        // Potential outlier or start of regime change
+                        if (!candidateRegime) {
+                            candidateRegime = {samples: [freq], startIndex: i};
+                            if (i < 10) console.log(`Regime ${i}: Starting candidate regime at ${freq.toFixed(1)}Hz (dev=${deviation.toFixed(1)}Hz from ${stableRegime.mean.toFixed(1)}Hz)`);
+                        } else {
+                            candidateRegime.samples.push(freq);
+                            if (i < 10) console.log(`Regime ${i}: Adding to candidate regime (${freq.toFixed(1)}Hz, ${candidateRegime.samples.length} samples)`);
+                        }
+                        
+                        // Check if candidate regime is stable enough to promote
+                        if (candidateRegime.samples.length >= 3) {
+                            const candidateMean = candidateRegime.samples.reduce((a,b) => a+b) / candidateRegime.samples.length;
+                            const candidateStable = candidateRegime.samples.every(s => Math.abs(s - candidateMean) <= stableThreshold);
+                            
+                            if (candidateStable) {
+                                // Promote candidate to new stable regime
+                                console.log(`Regime change detected! Old: ${stableRegime.mean.toFixed(1)}Hz → New: ${candidateMean.toFixed(1)}Hz`);
+                                stableRegime = {mean: candidateMean, samples: [...candidateRegime.samples], startIndex: candidateRegime.startIndex};
+                                
+                                // Mark all candidate samples as valid (including current)
+                                for (let j = candidateRegime.startIndex; j <= i; j++) {
+                                    const idx = results.length - (i - j);
+                                    if (results[idx]) {
+                                        results[idx] = {...results[idx], filteredOut: false, filterReason: null};
+                                    }
+                                }
+                                results.push({...r, filteredOut: false, filterReason: null});
+                                candidateRegime = null;
+                            } else {
+                                // Still unstable candidate - mark as outlier
+                                results.push({...r, filteredOut: true, filterReason: `Unstable candidate: ${deviation.toFixed(1)}Hz from stable ${stableRegime.mean.toFixed(1)}Hz`});
+                            }
+                        } else {
+                            // Not enough candidate samples yet - tentatively mark as outlier
+                            results.push({...r, filteredOut: true, filterReason: `Candidate: ${deviation.toFixed(1)}Hz from stable ${stableRegime.mean.toFixed(1)}Hz`});
+                        }
+                        
+                    } else {
+                        // Definitely an outlier - too far from current regime
+                        results.push({...r, filteredOut: true, filterReason: `Large outlier: ${deviation.toFixed(1)}Hz from regime ${stableRegime.mean.toFixed(1)}Hz`});
+                        candidateRegime = null; // Reset candidate
+                        if (i < 10) console.log(`Regime ${i}: Large outlier ${freq.toFixed(1)}Hz (dev=${deviation.toFixed(1)}Hz)`);
+                    }
+                }
+                
+                return results;
+            }
+
+            function applyHybridFilter(recordings) {
+                return recordings.map((r, i) => {
+                    if (isNaN(r.frequency) || !isFinite(r.frequency)) return { ...r, filteredOut: true, filterReason: 'Invalid' };
+                    
+                    // Stage 1: Physics bounds
+                    if (r.frequency < 50 || r.frequency > 500) {
+                        return { ...r, filteredOut: true, filterReason: 'Physics: outside guitar range' };
+                    }
+                    
+                    // Stage 2: Rate limiting
+                    if (i > 0) {
+                        const prevValid = recordings.slice(0, i).reverse().find(x => !isNaN(x.frequency) && isFinite(x.frequency) && x.frequency >= 50 && x.frequency <= 500);
+                        if (prevValid && Math.abs(r.frequency - prevValid.frequency) > 80) {
+                            return { ...r, filteredOut: true, filterReason: 'Hybrid: rate change >80Hz' };
+                        }
+                    }
+                    
+                    // Stage 3: Local statistical outlier within ±30Hz window
+                    const window = recordings.slice(Math.max(0, i-5), i+6)
+                        .filter(x => !isNaN(x.frequency) && isFinite(x.frequency) && x.frequency >= 50 && x.frequency <= 500);
+                    if (window.length >= 3) {
+                        const windowFreqs = window.map(x => x.frequency).sort((a, b) => a - b);
+                        const median = windowFreqs[Math.floor(windowFreqs.length / 2)];
+                        if (Math.abs(r.frequency - median) > 30) {
+                            return { ...r, filteredOut: true, filterReason: `Hybrid: ${Math.abs(r.frequency - median).toFixed(1)}Hz from local median` };
+                        }
+                    }
+                    
+                    return { ...r, filteredOut: false };
+                });
+            }
+
+            let currentFilteredData = enrichedRecordings;
+            let currentChart = null;
+
+            function createChart(data) {
+                if (currentChart) {
+                    currentChart.destroy();
+                }
+                
+                const validData = data.filter(r => !isNaN(r.frequency) && isFinite(r.frequency) && r.frequency > 0);
+                const filteredValidData = validData.filter(r => !r.filteredOut);
+                const filteredOutData = validData.filter(r => r.filteredOut);
+                const invalidData = data.filter(r => isNaN(r.frequency) || !isFinite(r.frequency) || r.frequency <= 0);
+
+                // Create chart
+                const ctx = document.getElementById('frequencyChart').getContext('2d');
+                currentChart = new Chart(ctx, {
+                    type: 'scatter',
+                    data: {
+                        datasets: [{
+                            label: 'Valid Readings',
+                            data: filteredValidData.map(d => ({x: d.timestamp, y: d.frequency})),
+                            backgroundColor: 'rgba(75, 192, 192, 0.6)',
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            pointRadius: 2
+                        }, {
+                            label: 'Filtered Out',
+                            data: filteredOutData.map(d => ({x: d.timestamp, y: d.frequency})),
+                            backgroundColor: 'rgba(255, 99, 132, 0.8)',
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            pointRadius: 4
+                        }, {
+                            label: 'Invalid/Missing Data',
+                            data: invalidData.map(d => ({x: d.timestamp, y: 100})), // Show at arbitrary height
+                            backgroundColor: 'rgba(128, 128, 128, 0.4)',
+                            borderColor: 'rgba(128, 128, 128, 1)',
+                            pointRadius: 3,
+                            pointStyle: 'cross'
+                        }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Live Frequency Detection Over Time'
+                        },
+                        legend: {
+                            display: true
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Time (ms)'
+                            }
+                        },
+                        y: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Frequency (Hz)'
+                            },
+                            min: min - 5,
+                            max: max + 5
+                        }
+                    }
+                }
+                });
+            }
+
+            function updateTable(data) {
+                const tableBody = document.querySelector('tbody');
+                tableBody.innerHTML = data.map(r => {
+                    let rowClass = 'good-row';
+                    if (isNaN(r.frequency) || !isFinite(r.frequency) || r.frequency <= 0) {
+                        rowClass = 'outlier-row';
+                    } else if (r.filteredOut) {
+                        rowClass = 'outlier-row';
+                    }
+                    
+                    const freq = !isNaN(r.frequency) && isFinite(r.frequency) ? r.frequency.toFixed(2) : 'N/A';
+                    const cents = r.cents && !isNaN(r.cents) ? r.cents.toFixed(1) : 'N/A';
+                    const filterInfo = r.filterReason ? ` (${r.filterReason})` : '';
+                    
+                    return `
+                        <tr class="${rowClass}" title="${r.filterReason || ''}">
+                            <td>${r.timestamp.toFixed(1)}</td>
+                            <td>${freq}${filterInfo}</td>
+                            <td>${r.note || 'N/A'}</td>
+                            <td>${cents}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // Function to apply filter
+            function applyAllFilters() {
+                console.log('Applying filter...'); // Debug
+                let filteredData = [...enrichedRecordings];
+                
+                if (document.getElementById('enable-filter').checked) {
+                    const stableThreshold = parseFloat(document.getElementById('stable-threshold').value);
+                    const changeThreshold = parseFloat(document.getElementById('change-threshold').value);
+                    console.log(`Filter enabled: stable=${stableThreshold}, change=${changeThreshold}`);
+                    filteredData = applyAdaptiveRegimeFilter(filteredData, stableThreshold, changeThreshold);
+                } else {
+                    // No filtering - mark all as valid
+                    filteredData = filteredData.map(r => ({ ...r, filteredOut: false, filterReason: null }));
+                }
+                
+                const filteredOutCount = filteredData.filter(r => r.filteredOut).length;
+                console.log(`Filtered out ${filteredOutCount} of ${filteredData.length} readings`);
+                
+                currentFilteredData = filteredData;
+                createChart(filteredData);
+                updateTable(filteredData);
+                updateCopyButton(filteredData);
+            }
+
+            function updateCopyButton(filteredData) {
+                document.getElementById('copy-data-btn').onclick = () => {
+                    const copyText = filteredData.map(r => {
+                        const freq = !isNaN(r.frequency) && isFinite(r.frequency) ? r.frequency.toFixed(2) : 'N/A';
+                        const cents = r.cents && !isNaN(r.cents) ? r.cents.toFixed(1) : 'N/A';
+                        const filtered = r.filteredOut ? ' (FILTERED)' : '';
+                        return `${r.timestamp.toFixed(1)}\t${freq}${filtered}\t${r.note || 'N/A'}\t${cents}`;
+                    }).join('\n');
+                    
+                    navigator.clipboard.writeText(copyText).then(() => {
+                        const btn = document.getElementById('copy-data-btn');
+                        const originalText = btn.textContent;
+                        btn.textContent = 'Copied!';
+                        btn.style.background = '#28a745';
+                        setTimeout(() => {
+                            btn.textContent = originalText;
+                            btn.style.background = '#007bff';
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('Failed to copy: ', err);
+                        alert('Failed to copy data to clipboard');
+                    });
+                };
+            }
+
+            // Add auto-update event listeners
+            document.getElementById('enable-filter').addEventListener('change', applyAllFilters);
+            document.getElementById('stable-threshold').addEventListener('input', applyAllFilters);
+            document.getElementById('change-threshold').addEventListener('input', applyAllFilters);
+
+            // Initialize with filters applied
+            applyAllFilters();
+        }
+
+        // Load and display debug data
+        try {
+            const debugDataStr = localStorage.getItem('tuner-debug-data');
+            if (!debugDataStr) {
+                document.getElementById('content').innerHTML = `
+                    <div class="error">
+                        <h2>No Debug Data Found</h2>
+                        <p>Please start the tuner, play some notes, and click the debug button to generate data.</p>
+                    </div>
+                `;
+            } else {
+                const debugData = JSON.parse(debugDataStr);
+                if (!debugData.recordings || debugData.recordings.length === 0) {
+                    document.getElementById('content').innerHTML = `
+                        <div class="error">
+                            <h2>No Recordings Found</h2>
+                            <p>The debug data exists but contains no recordings. Please play some notes and try again.</p>
+                        </div>
+                    `;
+                } else {
+                    generateReport(debugData);
+                }
+            }
+        } catch (error) {
+            console.error('Error loading debug data:', error);
+            document.getElementById('content').innerHTML = `
+                <div class="error">
+                    <h2>Error Loading Debug Data</h2>
+                    <p>There was an error parsing the debug data: ${error.message}</p>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>

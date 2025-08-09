@@ -10,9 +10,11 @@ class GuitarTuner {
    private audioContext: AudioContext | null = null;
    private analyser: AnalyserNode | null = null;
    private microphone: MediaStreamAudioSourceNode | null = null;
+   private scriptProcessor: ScriptProcessorNode | null = null;
    private isActive = false;
    private animationId: number | null = null;
    private dataArray: Float32Array | null = null;
+   private useRawAudio = true; // Toggle between raw ScriptProcessor and analyser
 
    private pitchDetector?: PitchDetector;
    private a4Frequency: number; // Current A4 reference frequency
@@ -29,6 +31,17 @@ class GuitarTuner {
    private freqDisplay = document.getElementById("freq-display") as HTMLDivElement;
    private freqUpBtn = document.getElementById("freq-up") as HTMLButtonElement;
    private freqDownBtn = document.getElementById("freq-down") as HTMLButtonElement;
+   private debugBtn = document.getElementById("debug-btn") as HTMLButtonElement | null;
+
+   // Debug recording
+   private debugRecording: Array<{
+      timestamp: number;
+      frequency: number;
+      note: string;
+      cents: number;
+   }> = [];
+   private debugStartTime: number = 0;
+   private lastValidCents: number = 0; // Keep track of last valid cents for needle
 
    constructor() {
       // Load saved A4 frequency from localStorage, default to 440Hz
@@ -40,6 +53,11 @@ class GuitarTuner {
       // Set up press-and-hold for frequency buttons
       this.setupPressAndHold(this.freqUpBtn, 1);
       this.setupPressAndHold(this.freqDownBtn, -1);
+
+      // Set up debug button
+      if (this.debugBtn) {
+         this.debugBtn.addEventListener("click", () => this.exportDebugData());
+      }
    }
 
    private loadA4Frequency(): number {
@@ -164,26 +182,39 @@ class GuitarTuner {
          // Initialize pitch detector with actual sample rate
          await this.initializePitchDetector(this.audioContext.sampleRate);
 
-         // Create analyser like test.html
-         this.analyser = this.audioContext.createAnalyser();
          this.microphone = this.audioContext.createMediaStreamSource(stream);
 
-         // Configure analyser exactly like test.html
-         this.analyser.fftSize = (this.pitchDetector?.chunkSize || 2048) * 2; // FRAME_SIZE * 2 = 4096
-         this.analyser.smoothingTimeConstant = 0.8; // Built-in smoothing like test.html
-         this.dataArray = new Float32Array(this.analyser.fftSize);
-
-         this.microphone.connect(this.analyser);
+         if (this.useRawAudio) {
+            // Use ScriptProcessorNode for raw audio samples
+            this.scriptProcessor = this.audioContext.createScriptProcessor(2048, 1, 1);
+            this.scriptProcessor.onaudioprocess = (event) => {
+               const inputBuffer = event.inputBuffer.getChannelData(0);
+               this.processRawAudioChunk(inputBuffer);
+            };
+            this.microphone.connect(this.scriptProcessor);
+            this.scriptProcessor.connect(this.audioContext.destination);
+         } else {
+            // Create analyser (original method with Web Audio smoothing)
+            this.analyser = this.audioContext.createAnalyser();
+            this.analyser.fftSize = (this.pitchDetector?.chunkSize || 2048) * 2;
+            this.analyser.smoothingTimeConstant = 0.8;
+            this.dataArray = new Float32Array(this.analyser.fftSize);
+            this.microphone.connect(this.analyser);
+         }
 
          this.isActive = true;
+         this.debugStartTime = performance.now();
+         this.debugRecording = []; // Reset recording
          this.startBtn.textContent = "STOP";
          this.startBtn.classList.remove("bg-green-600", "hover:bg-green-700");
          this.startBtn.classList.add("bg-red-600", "hover:bg-red-700");
          this.tuningControls.style.display = "none"; // Hide tuning controls when active
          this.clearAutoRepeat(); // Stop any ongoing auto-repeat
 
-         // Start processing audio like test.html
-         this.processAudio();
+         // Start processing audio (only for analyzer method)
+         if (!this.useRawAudio) {
+            this.processAudio();
+         }
       } catch (error) {
          console.error("Error accessing microphone:", error);
 
@@ -216,6 +247,11 @@ class GuitarTuner {
       if (this.microphone) {
          this.microphone.disconnect();
          this.microphone = null;
+      }
+
+      if (this.scriptProcessor) {
+         this.scriptProcessor.disconnect();
+         this.scriptProcessor = null;
       }
 
       if (this.audioContext) {
@@ -254,18 +290,47 @@ class GuitarTuner {
       this.animationId = requestAnimationFrame(() => this.processAudio());
    }
 
+   processRawAudioChunk(audioData: Float32Array) {
+      if (!this.isActive || !this.pitchDetector) {
+         return;
+      }
+
+      try {
+         const result = this.pitchDetector.processAudioChunk(audioData);
+         if (result) {
+            this.updateDisplay(result.note, result.frequency, result.cents);
+         }
+      } catch (error) {
+         console.error("Error processing raw audio:", error);
+      }
+   }
+
    updateDisplay(note: string, frequency: number, cents: number) {
       this.noteDisplay.textContent = note;
       this.frequencyDisplay.textContent = `${frequency.toFixed(2)} Hz`;
 
-      // Check for NaN values and default to 0
+      // Record debug data (record all attempts, including NaN values)
+      if (this.isActive) {
+         const timestamp = performance.now() - this.debugStartTime;
+         this.debugRecording.push({
+            timestamp,
+            frequency,
+            note,
+            cents
+         });
+      }
+
+      // Handle NaN values - keep last valid cents for needle display
+      let displayCents = cents;
       if (Number.isNaN(cents) || Number.isNaN(frequency)) {
          console.warn("Invalid frequency or cents:", { frequency, cents });
-         cents = 0;
+         displayCents = this.lastValidCents; // Use last valid value for needle
+      } else {
+         this.lastValidCents = cents; // Update last valid value
       }
 
       const maxCents = 50;
-      const clampedCents = Math.max(-maxCents, Math.min(maxCents, cents));
+      const clampedCents = Math.max(-maxCents, Math.min(maxCents, displayCents));
       const angle = (clampedCents / maxCents) * 80;
 
       this.needle.setAttribute("transform", `rotate(${angle}, 100, 100)`);
@@ -280,6 +345,31 @@ class GuitarTuner {
          this.noteDisplay.className = "text-6xl font-mono font-bold text-red-400 mb-2";
          this.needle.setAttribute("stroke", "#ef4444");
       }
+   }
+
+   private exportDebugData() {
+      console.log("Debug export requested. Recording length:", this.debugRecording.length);
+      console.log("Is active:", this.isActive);
+      console.log("Sample recordings:", this.debugRecording.slice(0, 3));
+
+      if (this.debugRecording.length === 0) {
+         alert(`No debug data recorded. Recording length: ${this.debugRecording.length}, Is active: ${this.isActive}. Start the tuner and play some notes first.`);
+         return;
+      }
+
+      // Save to localStorage
+      const debugData = {
+         recordings: this.debugRecording,
+         duration: this.debugRecording[this.debugRecording.length - 1]?.timestamp || 0,
+         a4Frequency: this.a4Frequency,
+         exportTime: new Date().toISOString()
+      };
+
+      localStorage.setItem("tuner-debug-data", JSON.stringify(debugData));
+      console.log("Debug data saved to localStorage", debugData);
+      
+      // Open debug page
+      window.open("debug.html", "_blank");
    }
 }
 
